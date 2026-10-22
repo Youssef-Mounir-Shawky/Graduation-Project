@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE IF NOT EXISTS nileguard.users (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL CHECK (length(trim(name)) > 0),
   email TEXT NOT NULL UNIQUE,
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
   deleted_at TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS crops (
+CREATE TABLE IF NOT EXISTS nileguard.crops (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   moisture_threshold_percent NUMERIC(5, 2) NOT NULL CHECK (moisture_threshold_percent BETWEEN 0 AND 100),
@@ -20,21 +20,21 @@ CREATE TABLE IF NOT EXISTS crops (
   CHECK (moisture_target_min_percent < moisture_target_max_percent)
 );
 
-CREATE TABLE IF NOT EXISTS soil_types (
+CREATE TABLE IF NOT EXISTS nileguard.soil_types (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS gateways (
+CREATE TABLE IF NOT EXISTS nileguard.gateways (
   id TEXT PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS zones (
+CREATE TABLE IF NOT EXISTS nileguard.zones (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  crop_id TEXT NOT NULL REFERENCES crops(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  soil_type_id TEXT NOT NULL REFERENCES soil_types(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  crop_id TEXT NOT NULL REFERENCES nileguard.crops(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  soil_type_id TEXT NOT NULL REFERENCES nileguard.soil_types(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   growth_stage TEXT NOT NULL,
   planting_date DATE NOT NULL,
   moisture_target_min_percent NUMERIC(5, 2) NOT NULL CHECK (moisture_target_min_percent BETWEEN 0 AND 100),
@@ -43,21 +43,21 @@ CREATE TABLE IF NOT EXISTS zones (
   CHECK (moisture_target_min_percent < moisture_target_max_percent)
 );
 
-CREATE TABLE IF NOT EXISTS nodes (
+CREATE TABLE IF NOT EXISTS nileguard.nodes (
   id TEXT PRIMARY KEY,
-  zone_id TEXT NOT NULL UNIQUE REFERENCES zones(id) ON DELETE CASCADE,
-  gateway_id TEXT NOT NULL REFERENCES gateways(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  zone_id TEXT NOT NULL UNIQUE REFERENCES nileguard.zones(id) ON DELETE CASCADE,
+  gateway_id TEXT NOT NULL REFERENCES nileguard.gateways(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   last_seen_at TIMESTAMPTZ,
   battery_mv INTEGER NOT NULL DEFAULT 0 CHECK (battery_mv BETWEEN 0 AND 10000),
   last_sequence BIGINT NOT NULL DEFAULT 0 CHECK (last_sequence >= 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS sensor_readings (
+CREATE TABLE IF NOT EXISTS nileguard.sensor_readings (
   id BIGSERIAL PRIMARY KEY,
-  node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-  zone_id TEXT NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
-  gateway_id TEXT NOT NULL REFERENCES gateways(id) ON DELETE RESTRICT,
+  node_id TEXT NOT NULL REFERENCES nileguard.nodes(id) ON DELETE CASCADE,
+  zone_id TEXT NOT NULL REFERENCES nileguard.zones(id) ON DELETE CASCADE,
+  gateway_id TEXT NOT NULL REFERENCES nileguard.gateways(id) ON DELETE RESTRICT,
   measured_at TIMESTAMPTZ NOT NULL,
   received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   soil_moisture_percent NUMERIC(6, 2) NOT NULL CHECK (soil_moisture_percent BETWEEN 0 AND 100),
@@ -73,33 +73,33 @@ CREATE TABLE IF NOT EXISTS sensor_readings (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS sensor_readings_gateway_sequence_idx
-  ON sensor_readings (node_id, sequence)
+  ON nileguard.sensor_readings (node_id, sequence)
   WHERE data_source = 'gateway';
 CREATE INDEX IF NOT EXISTS sensor_readings_zone_time_idx
-  ON sensor_readings (zone_id, measured_at DESC);
+  ON nileguard.sensor_readings (zone_id, measured_at DESC);
 CREATE INDEX IF NOT EXISTS sensor_readings_node_time_idx
-  ON sensor_readings (node_id, measured_at DESC);
+  ON nileguard.sensor_readings (node_id, measured_at DESC);
 CREATE INDEX IF NOT EXISTS sensor_readings_received_at_idx
-  ON sensor_readings (received_at DESC);
+  ON nileguard.sensor_readings (received_at DESC);
 
-CREATE TABLE IF NOT EXISTS valve_controls (
-  zone_id TEXT PRIMARY KEY REFERENCES zones(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS nileguard.valve_controls (
+  zone_id TEXT PRIMARY KEY REFERENCES nileguard.zones(id) ON DELETE CASCADE,
   state TEXT NOT NULL CHECK (state IN ('on', 'off')),
   mode TEXT NOT NULL CHECK (mode IN ('automatic', 'manual')),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_by TEXT REFERENCES users(id) ON DELETE SET NULL
+  updated_by TEXT REFERENCES nileguard.users(id) ON DELETE SET NULL
 );
 
-CREATE TABLE IF NOT EXISTS irrigation_schedule (
+CREATE TABLE IF NOT EXISTS nileguard.irrigation_schedule (
   id TEXT PRIMARY KEY,
-  zone_id TEXT NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
+  zone_id TEXT NOT NULL REFERENCES nileguard.zones(id) ON DELETE CASCADE,
   start_at TIMESTAMPTZ NOT NULL,
   duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),
   method TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('scheduled', 'running', 'completed'))
 );
 
-CREATE TABLE IF NOT EXISTS schema_migrations (
+CREATE TABLE IF NOT EXISTS nileguard.schema_migrations (
   filename TEXT PRIMARY KEY,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

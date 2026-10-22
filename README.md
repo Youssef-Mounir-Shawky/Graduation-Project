@@ -16,6 +16,34 @@ Open `http://127.0.0.1:5173` in Chrome. Vite serves the UI and proxies `/api` to
 
 The server reads its existing `DATABASE_URL` setting at runtime. Keep credentials in the local environment file; do not commit it. The database objects live in the dedicated `nileguard` schema, so the app does not need `CREATE` permission on PostgreSQL's `public` schema.
 
+## Initialize a shared Neon database
+
+The project applies its SQL migrations itself; do not paste the migration into Neon's SQL editor. The backend schema-qualifies database objects, so Neon's pooled endpoint works without a `search_path` startup parameter. Keep `sslmode=require` in the Neon connection URL. With the local `DATABASE_URL` set to the new Neon database, open a terminal at the repository root and run:
+
+```powershell
+npm run db:setup
+```
+
+This creates the `nileguard` schema and its tables, records the migration, and inserts the repeat-safe demo seed. Run this once before asking the rest of the team to connect. Start the local backend and dashboard with `npm run dev`; the API uses the same `DATABASE_URL`. Each teammate who runs the backend should configure their own untracked local environment file with the shared Neon connection string. Never commit or paste that string into chat or source control.
+
+Check the migration and tables in Neon's SQL editor:
+
+```sql
+SELECT filename, applied_at
+FROM nileguard.schema_migrations
+ORDER BY applied_at;
+
+SELECT table_name
+FROM information_schema.tables
+WHERE table_schema = 'nileguard' AND table_type = 'BASE TABLE'
+ORDER BY table_name;
+
+SELECT COUNT(*) AS sensor_readings
+FROM nileguard.sensor_readings;
+```
+
+Check the running backend at `http://127.0.0.1:3001/api/health`; the response should report `"persistence":"postgres"`. If setup fails, share only the error text after removing connection URLs, usernames, hostnames, and passwords. If the Neon role reports a schema permission error, use the database owner role for the initial setup.
+
 ## Demo sign-in
 
 | Role | Name | Email | Phone | Password |

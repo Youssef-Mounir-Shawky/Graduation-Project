@@ -73,12 +73,12 @@ function mockMeasurement(zone: typeof demoZones[number], timestamp: Date, index:
 async function seedUsers(client: PoolClient): Promise<string[]> {
   const issuedCredentials: string[] = [];
   for (const user of defaultUsers) {
-    const existing = await client.query("SELECT 1 FROM users WHERE lower(email) = lower($1)", [user.email]);
+    const existing = await client.query("SELECT 1 FROM nileguard.users WHERE lower(email) = lower($1)", [user.email]);
     if (existing.rowCount) continue;
     const password = randomBytes(18).toString("base64url");
     const passwordHash = await hashPassword(password);
     const result = await client.query(
-      `INSERT INTO users (id, name, email, phone_number, password_hash, role)
+      `INSERT INTO nileguard.users (id, name, email, phone_number, password_hash, role)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT DO NOTHING
        RETURNING email`,
@@ -105,7 +105,7 @@ async function seedSyntheticHistory(client: PoolClient): Promise<void> {
 
   for (const zone of demoZones) {
     const existing = await client.query(
-      "SELECT 1 FROM sensor_readings WHERE zone_id = $1 AND data_source = 'synthetic' LIMIT 1",
+      "SELECT 1 FROM nileguard.sensor_readings WHERE zone_id = $1 AND data_source = 'synthetic' LIMIT 1",
       [zone.id],
     );
     if (existing.rowCount) continue;
@@ -142,7 +142,7 @@ async function seedSyntheticHistory(client: PoolClient): Promise<void> {
         return `(${row.map((_value, column) => `$${position + column + 1}`).join(", ")})`;
       });
       await client.query(
-        `INSERT INTO sensor_readings (
+        `INSERT INTO nileguard.sensor_readings (
            node_id, zone_id, gateway_id, measured_at, received_at, soil_moisture_percent,
            air_temperature_c, light_lux, light_ppfd, relative_humidity_percent,
            battery_mv, co2_ppm, soil_ph, sequence, data_source
@@ -153,7 +153,7 @@ async function seedSyntheticHistory(client: PoolClient): Promise<void> {
 
     const latest = mockMeasurement(zone, now, count - 1, count);
     await client.query(
-      `UPDATE nodes
+      `UPDATE nileguard.nodes
        SET last_seen_at = COALESCE(last_seen_at, $2),
            battery_mv = CASE WHEN last_seen_at IS NULL THEN $3 ELSE battery_mv END
        WHERE id = $1`,
@@ -170,7 +170,7 @@ export async function seedDatabase(database: Pool): Promise<void> {
     issuedCredentials = await seedUsers(client);
     for (const crop of crops) {
       await client.query(
-        `INSERT INTO crops (
+        `INSERT INTO nileguard.crops (
            id, name, moisture_threshold_percent, moisture_target_min_percent,
            moisture_target_max_percent, stages
          ) VALUES ($1, $2, $3, $4, $5, $6)
@@ -184,15 +184,15 @@ export async function seedDatabase(database: Pool): Promise<void> {
       );
     }
     await client.query(
-      "INSERT INTO soil_types (id, name) VALUES ('clay', 'Clay soil'), ('sandy', 'Sandy soil') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+      "INSERT INTO nileguard.soil_types (id, name) VALUES ('clay', 'Clay soil'), ('sandy', 'Sandy soil') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
     );
-    await client.query("INSERT INTO gateways (id) VALUES ('gateway-demo') ON CONFLICT (id) DO NOTHING");
+    await client.query("INSERT INTO nileguard.gateways (id) VALUES ('gateway-demo') ON CONFLICT (id) DO NOTHING");
 
     for (const zone of demoZones) {
       const crop = crops.find((entry) => entry.id === zone.crop);
       if (!crop) throw new Error(`Seed zone ${zone.id} refers to an unknown crop.`);
       await client.query(
-        `INSERT INTO zones (
+        `INSERT INTO nileguard.zones (
            id, name, crop_id, soil_type_id, growth_stage, planting_date,
            moisture_target_min_percent, moisture_target_max_percent
          ) VALUES ($1, $2, $3, $4, $5, current_date - interval '180 days', $6, $7)
@@ -200,13 +200,13 @@ export async function seedDatabase(database: Pool): Promise<void> {
         [zone.id, zone.name, zone.crop, zone.soil, zone.stage, crop.minimum, crop.maximum],
       );
       await client.query(
-        `INSERT INTO nodes (id, zone_id, gateway_id)
+        `INSERT INTO nileguard.nodes (id, zone_id, gateway_id)
          VALUES ($1, $2, 'gateway-demo')
          ON CONFLICT (id) DO NOTHING`,
         [zone.node, zone.id],
       );
       await client.query(
-        `INSERT INTO valve_controls (zone_id, state, mode)
+        `INSERT INTO nileguard.valve_controls (zone_id, state, mode)
          VALUES ($1, 'off', 'automatic')
          ON CONFLICT (zone_id) DO NOTHING`,
         [zone.id],
@@ -222,7 +222,7 @@ export async function seedDatabase(database: Pool): Promise<void> {
     ] as const;
     for (const [id, zoneId, hour, duration, method] of schedules) {
       await client.query(
-        `INSERT INTO irrigation_schedule (id, zone_id, start_at, duration_minutes, method, status)
+        `INSERT INTO nileguard.irrigation_schedule (id, zone_id, start_at, duration_minutes, method, status)
          VALUES ($1, $2, date_trunc('day', now()) + make_interval(hours => $3), $4, $5, 'scheduled')
          ON CONFLICT (id) DO NOTHING`,
         [id, zoneId, hour, duration, method],
@@ -253,7 +253,7 @@ export async function rotateDemoPasswords(database: Pool): Promise<void> {
       const password = randomBytes(18).toString("base64url");
       const passwordHash = await hashPassword(password);
       const result = await client.query(
-        `UPDATE users SET password_hash = $2, updated_at = now()
+        `UPDATE nileguard.users SET password_hash = $2, updated_at = now()
          WHERE id = $1
          RETURNING email`,
         [user.id, passwordHash],

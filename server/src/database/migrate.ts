@@ -5,7 +5,7 @@ import type { Pool } from "pg";
 export async function runMigrations(database: Pool): Promise<void> {
   await database.query("CREATE SCHEMA IF NOT EXISTS nileguard AUTHORIZATION CURRENT_USER");
   await database.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
+    CREATE TABLE IF NOT EXISTS nileguard.schema_migrations (
       filename TEXT PRIMARY KEY,
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
@@ -15,7 +15,7 @@ export async function runMigrations(database: Pool): Promise<void> {
   const files = (await readdir(folder)).filter((file) => file.endsWith(".sql")).sort();
   for (const filename of files) {
     const alreadyApplied = await database.query(
-      "SELECT 1 FROM schema_migrations WHERE filename = $1",
+      "SELECT 1 FROM nileguard.schema_migrations WHERE filename = $1",
       [filename],
     );
     if (alreadyApplied.rowCount) continue;
@@ -25,7 +25,7 @@ export async function runMigrations(database: Pool): Promise<void> {
     try {
       await client.query("BEGIN");
       await client.query(sql);
-      await client.query("INSERT INTO schema_migrations (filename) VALUES ($1)", [filename]);
+      await client.query("INSERT INTO nileguard.schema_migrations (filename) VALUES ($1)", [filename]);
       await client.query("COMMIT");
       console.log(`Applied database migration ${filename}.`);
     } catch (error) {

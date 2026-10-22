@@ -105,39 +105,39 @@ function mapValve(row: Row): ValveControl {
 const zoneSelect = `
   SELECT z.id, z.name, z.crop_id, st.id AS soil_type, z.growth_stage, z.planting_date,
          n.id AS node_id, z.moisture_target_min_percent, z.moisture_target_max_percent
-  FROM zones z
-  JOIN soil_types st ON st.id = z.soil_type_id
-  LEFT JOIN nodes n ON n.zone_id = z.id
+  FROM nileguard.zones z
+  JOIN nileguard.soil_types st ON st.id = z.soil_type_id
+  LEFT JOIN nileguard.nodes n ON n.zone_id = z.id
 `;
 
 const readingSelect = `
   SELECT node_id, zone_id, gateway_id, measured_at, received_at,
          soil_moisture_percent, air_temperature_c, light_lux, light_ppfd,
          relative_humidity_percent, battery_mv, co2_ppm, soil_ph, sequence, data_source
-  FROM sensor_readings
+  FROM nileguard.sensor_readings
 `;
 
 export class PostgresRepository implements NileGuardRepository {
   constructor(private readonly database: Pool) {}
 
   async listUsers(): Promise<User[]> {
-    const result = await this.database.query("SELECT * FROM users ORDER BY created_at, id");
+    const result = await this.database.query("SELECT * FROM nileguard.users ORDER BY created_at, id");
     return result.rows.map(mapUser);
   }
 
   async getUserById(id: string): Promise<User | undefined> {
-    const result = await this.database.query("SELECT * FROM users WHERE id = $1", [id]);
+    const result = await this.database.query("SELECT * FROM nileguard.users WHERE id = $1", [id]);
     return result.rows[0] ? mapUser(result.rows[0]) : undefined;
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    const result = await this.database.query("SELECT * FROM users WHERE lower(email) = lower($1)", [email]);
+    const result = await this.database.query("SELECT * FROM nileguard.users WHERE lower(email) = lower($1)", [email]);
     return result.rows[0] ? mapUser(result.rows[0]) : undefined;
   }
 
   async addUser(user: User): Promise<void> {
     await this.database.query(
-      `INSERT INTO users (id, name, email, phone_number, password_hash, role, created_at)
+      `INSERT INTO nileguard.users (id, name, email, phone_number, password_hash, role, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [user.id, user.name, user.email.toLowerCase(), user.phoneNumber, user.passwordHash, user.role, user.createdAt],
     );
@@ -160,7 +160,7 @@ export class PostgresRepository implements NileGuardRepository {
     const assignments = entries.map(([key], index) => `${columns[key as keyof typeof changes]} = $${index + 1}`);
     values.push(new Date().toISOString(), id);
     const result = await this.database.query(
-      `UPDATE users SET ${assignments.join(", ")}, updated_at = $${values.length - 1}
+      `UPDATE nileguard.users SET ${assignments.join(", ")}, updated_at = $${values.length - 1}
        WHERE id = $${values.length} RETURNING *`,
       values,
     );
@@ -169,19 +169,19 @@ export class PostgresRepository implements NileGuardRepository {
 
   async deleteUser(id: string): Promise<boolean> {
     const result = await this.database.query(
-      "DELETE FROM users WHERE id = $1",
+      "DELETE FROM nileguard.users WHERE id = $1",
       [id],
     );
     return (result.rowCount ?? 0) > 0;
   }
 
   async listCrops(): Promise<Crop[]> {
-    const result = await this.database.query("SELECT * FROM crops ORDER BY name");
+    const result = await this.database.query("SELECT * FROM nileguard.crops ORDER BY name");
     return result.rows.map(mapCrop);
   }
 
   async getCrop(id: string): Promise<Crop | undefined> {
-    const result = await this.database.query("SELECT * FROM crops WHERE id = $1", [id]);
+    const result = await this.database.query("SELECT * FROM nileguard.crops WHERE id = $1", [id]);
     return result.rows[0] ? mapCrop(result.rows[0]) : undefined;
   }
 
@@ -197,7 +197,7 @@ export class PostgresRepository implements NileGuardRepository {
 
   async addZone(zone: Zone): Promise<void> {
     await this.database.query(
-      `INSERT INTO zones (
+      `INSERT INTO nileguard.zones (
          id, name, crop_id, soil_type_id, growth_stage, planting_date,
          moisture_target_min_percent, moisture_target_max_percent
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -205,7 +205,7 @@ export class PostgresRepository implements NileGuardRepository {
         zone.moistureTargetMinPercent, zone.moistureTargetMaxPercent],
     );
     await this.database.query(
-      "INSERT INTO valve_controls (zone_id, state, mode) VALUES ($1, 'off', 'automatic')",
+      "INSERT INTO nileguard.valve_controls (zone_id, state, mode) VALUES ($1, 'off', 'automatic')",
       [zone.id],
     );
   }
@@ -226,7 +226,7 @@ export class PostgresRepository implements NileGuardRepository {
       values.push(id);
       const assignments = entries.map(([key], index) => `${mapping[key]} = $${index + 1}`);
       const updated = await this.database.query(
-        `UPDATE zones SET ${assignments.join(", ")} WHERE id = $${values.length} RETURNING id`,
+        `UPDATE nileguard.zones SET ${assignments.join(", ")} WHERE id = $${values.length} RETURNING id`,
         values,
       );
       if (!updated.rowCount) return undefined;
@@ -235,17 +235,17 @@ export class PostgresRepository implements NileGuardRepository {
   }
 
   async deleteZone(id: string): Promise<boolean> {
-    const result = await this.database.query("DELETE FROM zones WHERE id = $1", [id]);
+    const result = await this.database.query("DELETE FROM nileguard.zones WHERE id = $1", [id]);
     return (result.rowCount ?? 0) > 0;
   }
 
   async listNodes(): Promise<Node[]> {
-    const result = await this.database.query("SELECT * FROM nodes ORDER BY id");
+    const result = await this.database.query("SELECT * FROM nileguard.nodes ORDER BY id");
     return result.rows.map(mapNode);
   }
 
   async getNode(id: string): Promise<Node | undefined> {
-    const result = await this.database.query("SELECT * FROM nodes WHERE id = $1", [id]);
+    const result = await this.database.query("SELECT * FROM nileguard.nodes WHERE id = $1", [id]);
     return result.rows[0] ? mapNode(result.rows[0]) : undefined;
   }
 
@@ -253,9 +253,9 @@ export class PostgresRepository implements NileGuardRepository {
     const client = await this.database.connect();
     try {
       await client.query("BEGIN");
-      await client.query("INSERT INTO gateways (id) VALUES ($1) ON CONFLICT (id) DO NOTHING", [node.gatewayId]);
+      await client.query("INSERT INTO nileguard.gateways (id) VALUES ($1) ON CONFLICT (id) DO NOTHING", [node.gatewayId]);
       await client.query(
-        `INSERT INTO nodes (id, zone_id, gateway_id, last_seen_at, battery_mv, last_sequence)
+        `INSERT INTO nileguard.nodes (id, zone_id, gateway_id, last_seen_at, battery_mv, last_sequence)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [node.id, node.zoneId, node.gatewayId, node.lastSeenAt, node.batteryMv, node.lastSequence],
       );
@@ -282,13 +282,13 @@ export class PostgresRepository implements NileGuardRepository {
     try {
       await client.query("BEGIN");
       if (changes.gatewayId) {
-        await client.query("INSERT INTO gateways (id) VALUES ($1) ON CONFLICT (id) DO NOTHING", [changes.gatewayId]);
+        await client.query("INSERT INTO nileguard.gateways (id) VALUES ($1) ON CONFLICT (id) DO NOTHING", [changes.gatewayId]);
       }
       const values = entries.map(([, value]) => value);
       values.push(id);
       const assignments = entries.map(([key], index) => `${mapping[key]} = $${index + 1}`);
       const result = await client.query(
-        `UPDATE nodes SET ${assignments.join(", ")} WHERE id = $${values.length} RETURNING *`,
+        `UPDATE nileguard.nodes SET ${assignments.join(", ")} WHERE id = $${values.length} RETURNING *`,
         values,
       );
       await client.query("COMMIT");
@@ -302,7 +302,7 @@ export class PostgresRepository implements NileGuardRepository {
   }
 
   async deleteNode(id: string): Promise<boolean> {
-    const result = await this.database.query("DELETE FROM nodes WHERE id = $1", [id]);
+    const result = await this.database.query("DELETE FROM nileguard.nodes WHERE id = $1", [id]);
     return (result.rowCount ?? 0) > 0;
   }
 
@@ -339,7 +339,7 @@ export class PostgresRepository implements NileGuardRepository {
     try {
       await client.query("BEGIN");
       const nodeResult = await client.query(
-        "SELECT last_sequence FROM nodes WHERE id = $1 FOR UPDATE",
+        "SELECT last_sequence FROM nileguard.nodes WHERE id = $1 FOR UPDATE",
         [reading.node_id],
       );
       if (!nodeResult.rowCount) throw new Error(`Node '${reading.node_id}' disappeared before telemetry was stored.`);
@@ -347,7 +347,7 @@ export class PostgresRepository implements NileGuardRepository {
         throw new Error("STALE_SEQUENCE");
       }
       await client.query(
-        `INSERT INTO sensor_readings (
+        `INSERT INTO nileguard.sensor_readings (
            node_id, zone_id, gateway_id, measured_at, received_at,
            soil_moisture_percent, air_temperature_c, light_lux, light_ppfd,
            relative_humidity_percent, battery_mv, co2_ppm, soil_ph, sequence, data_source
@@ -357,7 +357,7 @@ export class PostgresRepository implements NileGuardRepository {
           reading.battery_mv, reading.co2_ppm, reading.soil_ph, reading.seq, reading.data_source],
       );
       await client.query(
-        "UPDATE nodes SET last_sequence = $2, last_seen_at = $3, battery_mv = $4 WHERE id = $1",
+        "UPDATE nileguard.nodes SET last_sequence = $2, last_seen_at = $3, battery_mv = $4 WHERE id = $1",
         [reading.node_id, reading.seq, reading.received_at, reading.battery_mv],
       );
       await client.query("COMMIT");
@@ -370,13 +370,13 @@ export class PostgresRepository implements NileGuardRepository {
   }
 
   async getValve(zoneId: string): Promise<ValveControl | undefined> {
-    const result = await this.database.query("SELECT * FROM valve_controls WHERE zone_id = $1", [zoneId]);
+    const result = await this.database.query("SELECT * FROM nileguard.valve_controls WHERE zone_id = $1", [zoneId]);
     return result.rows[0] ? mapValve(result.rows[0]) : undefined;
   }
 
   async setManualValve(zoneId: string, state: ValveState, userId: string): Promise<ValveControl | undefined> {
     const result = await this.database.query(
-      `UPDATE valve_controls
+      `UPDATE nileguard.valve_controls
        SET state = $2, mode = 'manual', updated_at = now(), updated_by = $3
        WHERE zone_id = $1 RETURNING *`,
       [zoneId, state, userId],
@@ -386,7 +386,7 @@ export class PostgresRepository implements NileGuardRepository {
 
   async clearManualValve(zoneId: string): Promise<ValveControl | undefined> {
     const result = await this.database.query(
-      `UPDATE valve_controls
+      `UPDATE nileguard.valve_controls
        SET mode = 'automatic', updated_at = now(), updated_by = NULL
        WHERE zone_id = $1 RETURNING *`,
       [zoneId],
@@ -396,7 +396,7 @@ export class PostgresRepository implements NileGuardRepository {
 
   async setAutomaticValve(zoneId: string, state: ValveState): Promise<ValveControl | undefined> {
     const result = await this.database.query(
-      `UPDATE valve_controls
+      `UPDATE nileguard.valve_controls
        SET state = $2, updated_at = now(), updated_by = NULL
        WHERE zone_id = $1 AND mode = 'automatic' RETURNING *`,
       [zoneId, state],
@@ -408,7 +408,7 @@ export class PostgresRepository implements NileGuardRepository {
     const result = await this.database.query(
       `SELECT s.id, s.zone_id, z.name AS zone_name, s.start_at,
               s.duration_minutes, s.method, s.status
-       FROM irrigation_schedule s JOIN zones z ON z.id = s.zone_id
+       FROM nileguard.irrigation_schedule s JOIN nileguard.zones z ON z.id = s.zone_id
        ORDER BY s.start_at`,
     );
     return result.rows.map((row: Row) => ({
@@ -426,10 +426,10 @@ export class PostgresRepository implements NileGuardRepository {
     const [zone, cropResult, nodeResult, reading, valve] = await Promise.all([
       this.getZone(zoneId),
       this.database.query(
-        `SELECT c.* FROM crops c JOIN zones z ON z.crop_id = c.id WHERE z.id = $1`,
+        `SELECT c.* FROM nileguard.crops c JOIN nileguard.zones z ON z.crop_id = c.id WHERE z.id = $1`,
         [zoneId],
       ),
-      this.database.query("SELECT n.* FROM nodes n WHERE n.zone_id = $1", [zoneId]),
+      this.database.query("SELECT n.* FROM nileguard.nodes n WHERE n.zone_id = $1", [zoneId]),
       this.getLatestReading(zoneId),
       this.getValve(zoneId),
     ]);

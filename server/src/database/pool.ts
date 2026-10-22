@@ -14,7 +14,6 @@ export const pool = new Pool({
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
   application_name: "nileguard-api",
-  options: "-c search_path=nileguard,public",
 });
 
 pool.on("error", (error) => {
