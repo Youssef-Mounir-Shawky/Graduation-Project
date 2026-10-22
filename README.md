@@ -16,7 +16,7 @@ Open `http://127.0.0.1:5173` in Chrome. Vite serves the UI and proxies `/api` to
 
 The server reads its existing `DATABASE_URL` setting at runtime. Keep credentials in the local environment file; do not commit it. The database objects live in the dedicated `nileguard` schema, so the app does not need `CREATE` permission on PostgreSQL's `public` schema.
 
-## Demo sign-in
+## Demo sign-in 
 
 | Role | Name | Email | Phone |
 | --- | --- | --- | --- |
