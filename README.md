@@ -46,13 +46,13 @@ Check the running backend at `http://127.0.0.1:3001/api/health`; the response sh
 
 ## Demo sign-in
 
-| Role | Name | Email | Phone | 
-| --- | --- | --- | --- |
-| Admin | NileGuard Demo Admin | `farmer@nileguard.local` | `+1-202-555-0101` |
-| Operator | Amina Hassan | `amina.hassan@nileguard.local` | `+1-202-555-0102` |
-| Operator | Omar Khaled | `omar.khaled@nileguard.local` | `+1-202-555-0103` |
+| Role | Name | Email | Phone | One-time password |
+| --- | --- | --- | --- | --- |
+| Admin | NileGuard Demo Admin | `farmer@nileguard.local` | `+1-202-555-0101` | `5CkTvq3siUBNO3HecYq7AWND` |
+| Operator | Amina Hassan | `amina.hassan@nileguard.local` | `+1-202-555-0102` | `JWC1Cusg32DhkWfI1H0kul27` |
+| Operator | Omar Khaled | `omar.khaled@nileguard.local` | `+1-202-555-0103` | `vjOk0QnDiQWXgLc82Tu8BM-7` |
 
-On first seed, unique random passwords are printed once. If they are lost, run `npm run db:rotate-demo-passwords`; this resets only the three demo accounts and prints new passwords. Passwords are stored in the database as bcrypt hashes.
+These are the one-time passwords issued for the current demo accounts. Initial seeding creates unique random passwords and prints them once; seeding again does not change existing passwords. If these passwords no longer work or are lost, run `npm run db:rotate-demo-passwords`; this resets only the three demo accounts and prints new passwords. Passwords are stored in the database as bcrypt hashes.
 
 ## Data model and demo records
 
