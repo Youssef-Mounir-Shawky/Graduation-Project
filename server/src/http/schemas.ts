@@ -30,7 +30,7 @@ export const overrideSchema = z.object({
 const zoneFieldsSchema = z.object({
   name: z.string().trim().min(1).max(80),
   crop_id: entityId,
-  soil_type: z.enum(["clay", "sandy"]),
+  soil_type: z.enum(["loam", "sandy"]),
   growth_stage: z.string().trim().min(1).max(80),
   planting_date: z.iso.date(),
   moisture_target_min_percent: z.number().min(0).max(100),

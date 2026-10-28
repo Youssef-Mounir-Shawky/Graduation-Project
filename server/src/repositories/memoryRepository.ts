@@ -15,12 +15,12 @@ import { isNodeOnline, isReadingFresh } from "../services/telemetry.js";
 
 const initialCrops: Crop[] = [
   {
-    id: "lettuce",
-    name: "Lettuce",
-    moistureThresholdPercent: 30,
-    moistureTargetMinPercent: 35,
-    moistureTargetMaxPercent: 65,
-    stages: ["seedling", "vegetative", "heading", "maturity"],
+    id: "tomato",
+    name: "Tomato",
+    moistureThresholdPercent: 35,
+    moistureTargetMinPercent: 40,
+    moistureTargetMaxPercent: 70,
+    stages: ["seedling", "vegetative", "flowering", "fruiting", "maturity"],
   },
   {
     id: "potato",
@@ -33,9 +33,9 @@ const initialCrops: Crop[] = [
 ];
 
 const initialZones: Zone[] = [
-  { id: "zone-lettuce-clay", name: "Lettuce · Clay soil", cropId: "lettuce", soilType: "clay", growthStage: "vegetative", plantingDate: "2026-04-21", nodeId: "node-lettuce-clay", moistureTargetMinPercent: 35, moistureTargetMaxPercent: 65 },
-  { id: "zone-lettuce-sandy", name: "Lettuce · Sandy soil", cropId: "lettuce", soilType: "sandy", growthStage: "heading", plantingDate: "2026-04-21", nodeId: "node-lettuce-sandy", moistureTargetMinPercent: 35, moistureTargetMaxPercent: 65 },
-  { id: "zone-potato-clay", name: "Potato · Clay soil", cropId: "potato", soilType: "clay", growthStage: "bulking", plantingDate: "2026-04-21", nodeId: "node-potato-clay", moistureTargetMinPercent: 35, moistureTargetMaxPercent: 65 },
+  { id: "zone-tomato-loam", name: "Tomato · Loam soil", cropId: "tomato", soilType: "loam", growthStage: "vegetative", plantingDate: "2026-04-21", nodeId: "node-tomato-loam", moistureTargetMinPercent: 40, moistureTargetMaxPercent: 70 },
+  { id: "zone-tomato-sandy", name: "Tomato · Sandy soil", cropId: "tomato", soilType: "sandy", growthStage: "flowering", plantingDate: "2026-04-21", nodeId: "node-tomato-sandy", moistureTargetMinPercent: 40, moistureTargetMaxPercent: 70 },
+  { id: "zone-potato-loam", name: "Potato · Loam soil", cropId: "potato", soilType: "loam", growthStage: "bulking", plantingDate: "2026-04-21", nodeId: "node-potato-loam", moistureTargetMinPercent: 35, moistureTargetMaxPercent: 65 },
   { id: "zone-potato-sandy", name: "Potato · Sandy soil", cropId: "potato", soilType: "sandy", growthStage: "tuber-initiation", plantingDate: "2026-04-21", nodeId: "node-potato-sandy", moistureTargetMinPercent: 35, moistureTargetMaxPercent: 65 },
 ];
 
@@ -289,9 +289,9 @@ export class MemoryRepository implements NileGuardRepository {
       return date.toISOString();
     };
     const schedule = [
-      ["zone-lettuce-clay", 6, 0, 12, "Drip irrigation"],
-      ["zone-lettuce-sandy", 6, 45, 10, "Drip irrigation"],
-      ["zone-potato-clay", 7, 20, 18, "Drip irrigation"],
+      ["zone-tomato-loam", 6, 0, 16, "Drip irrigation"],
+      ["zone-tomato-sandy", 6, 45, 14, "Drip irrigation"],
+      ["zone-potato-loam", 7, 20, 18, "Drip irrigation"],
       ["zone-potato-sandy", 7, 45, 14, "Drip irrigation"],
     ] as const;
     for (const [zoneId, hour, minute, durationMinutes, method] of schedule) {

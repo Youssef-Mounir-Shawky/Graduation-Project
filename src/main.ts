@@ -39,6 +39,7 @@ type Locale = "en" | "ar";
 
 const views: View[] = ["Overview", "Zones", "Irrigation", "Analytics", "Weather", "Trends", "Alerts", "Settings"];
 const HISTORY_HOURS = 24 * 183;
+const mobileNavigationQuery = window.matchMedia("(max-width: 56rem)");
 const RANGE_HOURS: Record<TimeRange, number> = {
   "24 hours": 24,
   "7 days": 24 * 7,
@@ -90,6 +91,7 @@ const state: {
   locale: Locale;
   languageMenuOpen: boolean;
   sidebarCollapsed: boolean;
+  mobileNavOpen: boolean;
   zoneMenuOpen: boolean;
   loading: boolean;
   busy: boolean;
@@ -117,6 +119,7 @@ const state: {
   locale: localStorage.getItem("nileguard.locale") === "ar" ? "ar" : "en",
   languageMenuOpen: false,
   sidebarCollapsed: localStorage.getItem("nileguard.sidebar-collapsed") === "true",
+  mobileNavOpen: false,
   zoneMenuOpen: false,
   loading: false,
   busy: false,
@@ -149,9 +152,9 @@ function translateText(value: string): string {
     )
     .replace(/^(.+) returned to automatic irrigation\.$/i, "$1 عادت إلى الري التلقائي.")
     .replace(
-      /^(Lettuce|Potato) soil moisture is ([\d.]+)%, (at or above|below) (?:the interim |its )?([\d.]+)% (?:irrigation threshold|interim threshold)\.(?: The valve remains (on|off) because manual control takes priority\.)?$/i,
+      /^(Tomato|Potato) soil moisture is ([\d.]+)%, (at or above|below) (?:the interim |its )?([\d.]+)% (?:irrigation threshold|interim threshold)\.(?: The valve remains (on|off) because manual control takes priority\.)?$/i,
       (_match, crop: string, moisture: string, comparison: string, threshold: string, manualState?: string) =>
-        `${crop.toLowerCase() === "lettuce" ? "الخس" : "البطاطس"}: رطوبة التربة ${moisture}٪، ${
+        `${crop.toLowerCase() === "tomato" ? "الطماطم" : "البطاطس"}: رطوبة التربة ${moisture}٪، ${
           comparison.toLowerCase() === "below" ? "أقل من" : "عند أو أعلى من"
         } حد الري الأولي البالغ ${threshold}٪.${
           manualState ? ` يبقى الصمام ${manualState === "on" ? "مفتوحًا" : "مغلقًا"} لأن التحكم اليدوي له الأولوية.` : ""
@@ -943,9 +946,14 @@ function render(): void {
     return;
   }
 
-  app.innerHTML = `<div class="app-shell ${state.sidebarCollapsed ? "is-sidebar-collapsed" : ""}">
+  const isMobileNav = mobileNavigationQuery.matches;
+  const isNavigationExpanded = isMobileNav ? state.mobileNavOpen : !state.sidebarCollapsed;
+  const navigationLabel = isMobileNav
+    ? `${state.mobileNavOpen ? "Close" : "Open"} navigation menu`
+    : `${state.sidebarCollapsed ? "Expand" : "Collapse"} navigation sidebar`;
+  app.innerHTML = `<div class="app-shell ${state.sidebarCollapsed ? "is-sidebar-collapsed" : ""} ${state.mobileNavOpen ? "is-mobile-nav-open" : ""}">
     <header class="app-header">
-      <div class="brand-lockup"><button class="icon-button sidebar-toggle" type="button" aria-label="${state.sidebarCollapsed ? "Expand" : "Collapse"} navigation sidebar" aria-expanded="${!state.sidebarCollapsed}" data-action="toggle-sidebar">${icon("menu")}</button><a class="brand" href="#" aria-label="NileGuard overview" data-action="navigate" data-view="Overview">${icon("leaf", "brand__icon")}<span>NileGuard</span></a></div>
+      <div class="brand-lockup"><button class="icon-button sidebar-toggle" type="button" aria-label="${navigationLabel}" aria-expanded="${isNavigationExpanded}" data-action="toggle-sidebar">${icon("menu")}</button><a class="brand" href="#" aria-label="NileGuard overview" data-action="navigate" data-view="Overview">${icon("leaf", "brand__icon")}<span>NileGuard</span></a></div>
       <div class="header-context"><span class="connection-dot"></span><span>Willow Creek Greenhouse</span><span class="subtle">·</span><span>${state.mockHardwareEnabled ? "Mock sensors connected" : "API connected"}</span></div>
       <div class="app-header__actions">${renderLanguageSelect()}<button class="icon-button notification-button" type="button" aria-label="View alerts" data-action="navigate" data-view="Alerts">${icon("bell")}<i></i></button><button class="icon-button theme-toggle" type="button" aria-label="Switch to ${state.theme === "dark" ? "light" : "dark"} mode" title="Switch to ${state.theme === "dark" ? "light" : "dark"} mode" data-action="toggle-theme">${icon(state.theme === "dark" ? "sun" : "moon")}</button><button class="profile-button" type="button" aria-label="Account settings" data-action="navigate" data-view="Settings">${escapeHtml(state.user.name.slice(0, 1).toUpperCase())}</button></div>
     </header>
@@ -953,6 +961,14 @@ function render(): void {
       <main class="dashboard-main"><div class="main-content">${state.error ? `<div class="api-error" role="alert">${icon("alerts")}<span>${escapeHtml(state.error)}</span><button type="button" data-action="refresh" class="text-button">Retry</button></div>` : ""}${state.loading ? '<div class="loading-state" role="status">Loading greenhouse data…</div>' : ""}${renderContent()}</div><footer class="app-footer"><span>Module 3 threshold model · readings are mock data</span><span>Last sync ${state.zones[0]?.reading ? formatTime(state.zones[0].reading.received_at) : "—"} <i class="connection-dot"></i></span></footer></main>
     </div><div class="toast" role="status" aria-live="polite"></div></div>`;
   applyLocale(app);
+}
+
+function closeMobileNav(): void {
+  state.mobileNavOpen = false;
+  document.querySelector(".app-shell")?.classList.remove("is-mobile-nav-open");
+  const toggle = document.querySelector<HTMLButtonElement>(".sidebar-toggle");
+  toggle?.setAttribute("aria-expanded", "false");
+  toggle?.setAttribute("aria-label", "Open navigation menu");
 }
 
 function renderContent(): string {
@@ -1200,6 +1216,12 @@ document.addEventListener("keydown", (event: KeyboardEvent) => {
     document.querySelector<HTMLButtonElement>(".language-trigger")?.focus();
     return;
   }
+  if (event.key === "Escape" && state.mobileNavOpen) {
+    closeMobileNav();
+    render();
+    document.querySelector<HTMLButtonElement>(".sidebar-toggle")?.focus();
+    return;
+  }
   if (event.key === "Escape" && state.zoneMenuOpen) {
     state.zoneMenuOpen = false;
     render();
@@ -1243,6 +1265,9 @@ document.addEventListener("submit", (event: SubmitEvent) => {
 document.addEventListener("click", (event: MouseEvent) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
+  if (state.mobileNavOpen && !target.closest(".dashboard-nav, .sidebar-toggle")) {
+    closeMobileNav();
+  }
   const control = target.closest<HTMLElement>("[data-action]");
   if (state.zoneMenuOpen && !target.closest(".zone-picker")) {
     state.zoneMenuOpen = false;
@@ -1260,6 +1285,7 @@ document.addEventListener("click", (event: MouseEvent) => {
       if (nextView && views.includes(nextView as View)) {
         state.view = nextView as View;
         state.zoneMenuOpen = false;
+        state.mobileNavOpen = false;
         render();
         if (state.view === "Settings" && state.user?.role === "admin") void loadUsers();
         if (["Analytics", "Weather", "Trends"].includes(state.view)) void refreshDashboard();
@@ -1299,9 +1325,20 @@ document.addEventListener("click", (event: MouseEvent) => {
       break;
     }
     case "toggle-sidebar": {
-      state.sidebarCollapsed = !state.sidebarCollapsed;
-      localStorage.setItem("nileguard.sidebar-collapsed", String(state.sidebarCollapsed));
+      if (mobileNavigationQuery.matches) {
+        state.mobileNavOpen = !state.mobileNavOpen;
+      } else {
+        state.sidebarCollapsed = !state.sidebarCollapsed;
+        localStorage.setItem("nileguard.sidebar-collapsed", String(state.sidebarCollapsed));
+      }
       render();
+      if (mobileNavigationQuery.matches) {
+        if (state.mobileNavOpen) {
+          document.querySelector<HTMLButtonElement>(".dashboard-nav__item")?.focus();
+        } else {
+          document.querySelector<HTMLButtonElement>(".sidebar-toggle")?.focus();
+        }
+      }
       break;
     }
     case "toggle-zone-menu": {
@@ -1388,6 +1425,11 @@ document.addEventListener("click", (event: MouseEvent) => {
 
 onAuthenticationExpired(() => {
   clearUserSession("Your session expired. Sign in again to continue.");
+});
+
+mobileNavigationQuery.addEventListener("change", () => {
+  state.mobileNavOpen = false;
+  render();
 });
 
 async function initialize(): Promise<void> {
