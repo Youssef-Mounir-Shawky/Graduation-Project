@@ -1,5 +1,6 @@
 import "../styles/index.css";
 import "./dashboard.css";
+import arabicTranslations from "./i18n/ar.json";
 import {
   ApiError,
   createUser,
@@ -34,9 +35,11 @@ import type {
 
 type View = "Overview" | "Zones" | "Irrigation" | "Analytics" | "Weather" | "Trends" | "Alerts" | "Settings";
 type TimeRange = "24 hours" | "7 days" | "30 days" | "6 months";
+type Locale = "en" | "ar";
 
 const views: View[] = ["Overview", "Zones", "Irrigation", "Analytics", "Weather", "Trends", "Alerts", "Settings"];
 const HISTORY_HOURS = 24 * 183;
+const mobileNavigationQuery = window.matchMedia("(max-width: 56rem)");
 const RANGE_HOURS: Record<TimeRange, number> = {
   "24 hours": 24,
   "7 days": 24 * 7,
@@ -68,6 +71,7 @@ const iconPaths: Record<string, string> = {
   moon: '<path d="M20.9 13A8.5 8.5 0 0 1 11 3.1 8.5 8.5 0 1 0 20.9 13Z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  chevronDown: '<path d="m7 10 5 5 5-5"/>',
 };
 
 const state: {
@@ -82,8 +86,12 @@ const state: {
   readings: ApiReading[];
   historyReadings: ApiReading[];
   selectedZoneId: string;
+  usersExpanded: boolean;
   theme: "light" | "dark";
+  locale: Locale;
+  languageMenuOpen: boolean;
   sidebarCollapsed: boolean;
+  mobileNavOpen: boolean;
   zoneMenuOpen: boolean;
   loading: boolean;
   busy: boolean;
@@ -106,8 +114,12 @@ const state: {
   readings: [],
   historyReadings: [],
   selectedZoneId: "",
+  usersExpanded: false,
   theme: localStorage.getItem("nileguard.theme") === "dark" ? "dark" : "light",
+  locale: localStorage.getItem("nileguard.locale") === "ar" ? "ar" : "en",
+  languageMenuOpen: false,
   sidebarCollapsed: localStorage.getItem("nileguard.sidebar-collapsed") === "true",
+  mobileNavOpen: false,
   zoneMenuOpen: false,
   loading: false,
   busy: false,
@@ -121,6 +133,97 @@ const state: {
 };
 
 document.documentElement.dataset.theme = state.theme;
+
+const arabicTranslationEntries = Object.entries(arabicTranslations)
+  .sort(([left], [right]) => right.length - left.length);
+
+function translateText(value: string): string {
+  if (state.locale !== "ar") return value;
+  const preservedIdentifiers: string[] = [];
+  let translated = value
+    .replace(/\b(?:node|zone)-[a-z0-9]+(?:-[a-z0-9]+)+\b/gi, (identifier) => {
+      preservedIdentifiers.push(identifier);
+      return `\uE000${preservedIdentifiers.length - 1}\uE001`;
+    })
+    .replace(
+      /^(.+) valve manually turned (on|off)\.$/i,
+      (_match, zone: string, valveState: string) =>
+        `${zone}: تم ${valveState.toLowerCase() === "on" ? "تشغيل" : "إيقاف"} الصمام يدويًا.`,
+    )
+    .replace(/^(.+) returned to automatic irrigation\.$/i, "$1 عادت إلى الري التلقائي.")
+    .replace(
+      /^(Tomato|Potato) soil moisture is ([\d.]+)%, (at or above|below) (?:the interim |its )?([\d.]+)% (?:irrigation threshold|interim threshold)\.(?: The valve remains (on|off) because manual control takes priority\.)?$/i,
+      (_match, crop: string, moisture: string, comparison: string, threshold: string, manualState?: string) =>
+        `${crop.toLowerCase() === "tomato" ? "الطماطم" : "البطاطس"}: رطوبة التربة ${moisture}٪، ${
+          comparison.toLowerCase() === "below" ? "أقل من" : "عند أو أعلى من"
+        } حد الري الأولي البالغ ${threshold}٪.${
+          manualState ? ` يبقى الصمام ${manualState === "on" ? "مفتوحًا" : "مغلقًا"} لأن التحكم اليدوي له الأولوية.` : ""
+        }`,
+    )
+    .replace(
+      /(\d+)\s+of\s+(\d+)\s+nodes recently reported · data is mock until devices connect/i,
+      "$1 من $2 عقد أرسلت تقارير مؤخرًا · البيانات تجريبية حتى اتصال الأجهزة",
+    )
+    .replace(/^(\d+) open$/i, "$1 مفتوحة");
+  translated = arabicTranslationEntries.reduce((text, [source, translation]) => {
+    const escaped = source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return text.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "giu"), translation);
+  }, translated);
+  translated = translated.replace(/\uE000(\d+)\uE001/g, (_match, index: string) => preservedIdentifiers[Number(index)]);
+  return localizeDigits(translated);
+}
+
+function localizeDigits(value: string): string {
+  return state.locale === "ar"
+    ? value.replace(/\d/g, (digit) => "٠١٢٣٤٥٦٧٨٩"[Number(digit)])
+    : value;
+}
+
+function normalizeDigits(value: string): string {
+  return value.replace(/[٠-٩۰-۹]/g, (digit) => {
+    const code = digit.charCodeAt(0);
+    return String(code >= 0x06f0 ? code - 0x06f0 : code - 0x0660);
+  });
+}
+
+function applyLocale(root: HTMLElement): void {
+  const isArabic = state.locale === "ar";
+  document.documentElement.lang = state.locale;
+  document.documentElement.dir = isArabic ? "rtl" : "ltr";
+  document.title = isArabic ? "NileGuard - لوحة الري" : "NileGuard - Irrigation dashboard";
+  document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute(
+    "content",
+    state.theme === "dark" ? "#0b2319" : "#f4f6f2",
+  );
+  root.dir = isArabic ? "rtl" : "ltr";
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let textNode = walker.nextNode();
+  while (textNode) {
+    if (textNode.parentElement?.closest("script, style, [data-no-translate]") === null) {
+      textNode.nodeValue = translateText(textNode.nodeValue ?? "");
+    }
+    textNode = walker.nextNode();
+  }
+
+  for (const element of root.querySelectorAll<HTMLElement>("[aria-label], [title], [placeholder], [data-chart-tip]")) {
+    if (element.closest("[data-no-translate]")) continue;
+    for (const attribute of ["aria-label", "title", "placeholder", "data-chart-tip"]) {
+      const value = element.getAttribute(attribute);
+      if (value !== null) element.setAttribute(attribute, translateText(value));
+    }
+  }
+
+  if (isArabic) {
+    for (const input of root.querySelectorAll<HTMLInputElement>('input[type="email"], input[type="tel"], input[name="name"]')) {
+      input.value = localizeDigits(input.value);
+    }
+  }
+}
+
+function localeTag(): string {
+  return state.locale === "ar" ? "ar-EG" : "en-US";
+}
 
 function escapeHtml(value: unknown): string {
   const entities: Record<string, string> = {
@@ -153,16 +256,16 @@ function zoneStatus(zone: ApiZone): { label: string; tone: string } {
 }
 
 function formatTime(timestamp: string): string {
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
+  return new Intl.DateTimeFormat(localeTag(), { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
 }
 
 function formatDate(timestamp: string): string {
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(timestamp));
+  return new Intl.DateTimeFormat(localeTag(), { month: "short", day: "numeric" }).format(new Date(timestamp));
 }
 
 function formatRangePoint(timestamp: string): string {
   return state.range === "24 hours"
-    ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp))
+    ? new Intl.DateTimeFormat(localeTag(), { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp))
     : formatDate(timestamp);
 }
 
@@ -185,6 +288,20 @@ function rangeAverages(readings: ApiReading[], field: NumericReadingKey): DailyP
 function renderRangePicker(label: string): string {
   const ranges: TimeRange[] = ["24 hours", "7 days", "30 days", "6 months"];
   return `<div class="segmented-control range-picker" role="group" aria-label="${escapeHtml(label)}">${ranges.map((range) => `<button type="button" data-action="range" data-range="${range}" aria-pressed="${state.range === range}">${range}</button>`).join("")}</div>`;
+}
+
+function renderLanguageSelect(className = ""): string {
+  const isArabic = state.locale === "ar";
+  const options = (["en", "ar"] as const).map((locale) => {
+    const label = locale === "en" ? "English" : "العربية";
+    return `<button class="language-option ${state.locale === locale ? "is-selected" : ""}" type="button" role="option" aria-selected="${state.locale === locale}" data-action="select-language" data-locale="${locale}">${label}</button>`;
+  }).join("");
+  return `<div class="language-picker ${className}" data-no-translate>
+    <button class="language-trigger" type="button" data-action="toggle-language-menu" aria-haspopup="listbox" aria-expanded="${state.languageMenuOpen}" aria-controls="language-options" aria-label="${isArabic ? "اللغة" : "Language"}">
+      <span>${isArabic ? "العربية" : "English"}</span>${icon("chevronDown", "language-chevron")}
+    </button>
+    ${state.languageMenuOpen ? `<div class="language-menu" id="language-options" role="listbox" aria-label="${isArabic ? "اللغة" : "Language"}">${options}</div>` : ""}
+  </div>`;
 }
 
 function renderNav(): string {
@@ -618,7 +735,7 @@ function renderZoneRow(zone: ApiZone): string {
 }
 
 function renderScheduleEntry(entry: ApiScheduleEntry): string {
-  return `<div class="schedule-item"><div class="schedule-time"><strong>${formatTime(entry.start_at)}</strong></div><div class="schedule-copy"><strong>${escapeHtml(entry.zone_name)}</strong><span>${escapeHtml(entry.method)} · ${entry.duration_minutes} min</span></div><span class="status status--${entry.status === "running" ? "success" : "info"}">${escapeHtml(entry.status === "running" ? "Watering" : new Date(entry.start_at).toLocaleDateString() === new Date().toLocaleDateString() ? "Today" : "Upcoming")}</span></div>`;
+  return `<div class="schedule-item"><div class="schedule-time"><strong>${formatTime(entry.start_at)}</strong></div><div class="schedule-copy"><strong>${escapeHtml(entry.zone_name)}</strong><span>${escapeHtml(entry.method)} · ${entry.duration_minutes} min</span></div><span class="status status--${entry.status === "running" ? "success" : "info"}">${escapeHtml(entry.status === "running" ? "Watering" : new Date(entry.start_at).toLocaleDateString(localeTag()) === new Date().toLocaleDateString(localeTag()) ? "Today" : "Upcoming")}</span></div>`;
 }
 
 function renderOverview(): string {
@@ -631,7 +748,7 @@ function renderOverview(): string {
   const upcomingSchedule = state.schedule.slice(0, 3);
 
   return `<div class="dashboard-heading">
-    <div><p class="eyebrow">${new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date())}</p><h1>Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}, ${escapeHtml(state.user?.name.split(" ")[0] ?? "grower")}</h1><p class="page-intro">Current readings and recommendations from your garden.</p></div>
+    <div><p class="eyebrow">${new Intl.DateTimeFormat(localeTag(), { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date())}</p><h1>Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}, ${escapeHtml(state.user?.name.split(" ")[0] ?? "grower")}</h1><p class="page-intro">Current readings and recommendations from your garden.</p></div>
     <div class="cluster dashboard-actions">${state.mockHardwareEnabled ? `<button type="button" class="button button--secondary" data-action="simulate" ${state.busy ? "disabled" : ""}>${icon("simulate")}<span>Simulate sensor update</span></button>` : ""}<button type="button" class="button button--primary" data-action="toggle-valve" data-zone="${escapeHtml(zone?.id ?? "")}" ${!zone || state.busy ? "disabled" : ""}>${icon("irrigation")}<span>${valveOn ? "Turn valve off" : "Turn valve on"}</span></button>${zone?.valve.mode === "manual" ? `<button type="button" class="button button--quiet" data-action="restore-auto" data-zone="${escapeHtml(zone.id)}" ${state.busy ? "disabled" : ""}>Return to automatic</button>` : ""}</div>
   </div>
   <section class="metric-grid" aria-label="Greenhouse summary">
@@ -785,7 +902,7 @@ function renderSettings(): string {
       <label class="field"><span class="field__label">Role</span><select class="select" name="role"><option value="operator">Operator</option><option value="admin">Administrator</option></select></label>
       <button class="button button--primary" type="submit" ${state.busy ? "disabled" : ""}>Add user</button>
     </form>
-    <div class="user-list">${state.users.map((user) => `<article class="user-row"><div><strong>${escapeHtml(user.name)}</strong><span>${escapeHtml(user.email)} · ${escapeHtml(user.phoneNumber)}</span></div><span class="status status--info">${escapeHtml(user.role)}</span><div class="cluster">${user.id === state.user?.id ? '<span class="settings-note">You</span>' : `<button type="button" class="button button--quiet button--small" data-action="delete-user" data-user="${escapeHtml(user.id)}" aria-label="Delete ${escapeHtml(user.name)}" ${state.busy ? "disabled" : ""}>Delete</button>`}</div></article>`).join("") || '<p class="empty-copy">No users were found.</p>'}</div>
+    <div class="user-list">${(state.usersExpanded ? state.users : state.users.slice(0, 5)).map((user) => `<article class="user-row"><div><strong>${escapeHtml(user.name)}</strong><span>${escapeHtml(user.email)} · ${escapeHtml(user.phoneNumber)}</span></div><span class="status status--info">${escapeHtml(user.role)}</span><div class="cluster">${user.id === state.user?.id ? '<span class="settings-note">You</span>' : `<button type="button" class="button button--quiet button--small" data-action="delete-user" data-user="${escapeHtml(user.id)}" aria-label="Delete ${escapeHtml(user.name)}" ${state.busy ? "disabled" : ""}>Delete</button>`}</div></article>`).join("") || '<p class="empty-copy">No users were found.</p>'}${state.users.length > 5 && !state.usersExpanded ? '<button type="button" class="button button--secondary button--small user-list__load-more" data-action="load-more-users">Load More</button>' : ""}</div>
     <p class="settings-note">Users manage their own names, email addresses, phone numbers, and passwords in account settings. Administrators can add or delete accounts, but cannot edit another user's profile.</p>
   </section>` : "";
   return `<div class="dashboard-heading"><div><p class="eyebrow">Signed in securely</p><h1>Account & system</h1><p class="page-intro">Update your own account details and check backend status.</p></div><button type="button" class="button button--secondary" data-action="logout">${icon("logout")} Sign out</button></div>
@@ -805,6 +922,7 @@ function renderSettings(): string {
 function renderLogin(): string {
   const loginError = state.loginError || (state.error && state.error !== "Please sign in to continue." ? state.error : "");
   return `<main class="login-page"><section class="login-card">
+    ${renderLanguageSelect("login-language-select")}
     <div class="login-brand">${icon("leaf")}<span>NileGuard</span></div>
     <p class="eyebrow">Greenhouse irrigation</p><h1>Welcome back</h1><p class="login-intro">Sign in to view your zones, readings, and irrigation recommendations.</p>
     ${loginError ? `<div class="api-error" role="alert">${icon("alerts")}<span>${escapeHtml(loginError)}</span></div>` : ""}
@@ -824,18 +942,33 @@ function render(): void {
 
   if (!state.user) {
     app.innerHTML = renderLogin();
+    applyLocale(app);
     return;
   }
 
-  app.innerHTML = `<div class="app-shell ${state.sidebarCollapsed ? "is-sidebar-collapsed" : ""}">
+  const isMobileNav = mobileNavigationQuery.matches;
+  const isNavigationExpanded = isMobileNav ? state.mobileNavOpen : !state.sidebarCollapsed;
+  const navigationLabel = isMobileNav
+    ? `${state.mobileNavOpen ? "Close" : "Open"} navigation menu`
+    : `${state.sidebarCollapsed ? "Expand" : "Collapse"} navigation sidebar`;
+  app.innerHTML = `<div class="app-shell ${state.sidebarCollapsed ? "is-sidebar-collapsed" : ""} ${state.mobileNavOpen ? "is-mobile-nav-open" : ""}">
     <header class="app-header">
-      <div class="brand-lockup"><button class="icon-button sidebar-toggle" type="button" aria-label="${state.sidebarCollapsed ? "Expand" : "Collapse"} navigation sidebar" aria-expanded="${!state.sidebarCollapsed}" data-action="toggle-sidebar">${icon("menu")}</button><a class="brand" href="#" aria-label="NileGuard overview" data-action="navigate" data-view="Overview">${icon("leaf", "brand__icon")}<span>NileGuard</span></a></div>
+      <div class="brand-lockup"><button class="icon-button sidebar-toggle" type="button" aria-label="${navigationLabel}" aria-expanded="${isNavigationExpanded}" data-action="toggle-sidebar">${icon("menu")}</button><a class="brand" href="#" aria-label="NileGuard overview" data-action="navigate" data-view="Overview">${icon("leaf", "brand__icon")}<span>NileGuard</span></a></div>
       <div class="header-context"><span class="connection-dot"></span><span>Willow Creek Greenhouse</span><span class="subtle">·</span><span>${state.mockHardwareEnabled ? "Mock sensors connected" : "API connected"}</span></div>
-      <div class="app-header__actions"><button class="icon-button notification-button" type="button" aria-label="View alerts" data-action="navigate" data-view="Alerts">${icon("bell")}<i></i></button><button class="icon-button theme-toggle" type="button" aria-label="Switch to ${state.theme === "dark" ? "light" : "dark"} mode" title="Switch to ${state.theme === "dark" ? "light" : "dark"} mode" data-action="toggle-theme">${icon(state.theme === "dark" ? "sun" : "moon")}</button><button class="profile-button" type="button" aria-label="Account settings" data-action="navigate" data-view="Settings">${escapeHtml(state.user.name.slice(0, 1).toUpperCase())}</button></div>
+      <div class="app-header__actions">${renderLanguageSelect()}<button class="icon-button notification-button" type="button" aria-label="View alerts" data-action="navigate" data-view="Alerts">${icon("bell")}<i></i></button><button class="icon-button theme-toggle" type="button" aria-label="Switch to ${state.theme === "dark" ? "light" : "dark"} mode" title="Switch to ${state.theme === "dark" ? "light" : "dark"} mode" data-action="toggle-theme">${icon(state.theme === "dark" ? "sun" : "moon")}</button><button class="profile-button" type="button" aria-label="Account settings" data-action="navigate" data-view="Settings">${escapeHtml(state.user.name.slice(0, 1).toUpperCase())}</button></div>
     </header>
     <div class="dashboard-layout"><nav class="dashboard-nav" aria-label="Main navigation">${renderNav()}<div class="nav-bottom"><div class="help-card"><span class="help-card__icon">${icon("leaf")}</span><strong>Making every drop count</strong><small>Recommendations explain the reading and crop threshold behind each decision.</small><button type="button" class="text-button" data-action="navigate" data-view="Alerts">View decision reasons ${icon("chevron")}</button></div><div class="user-card"><span class="user-avatar">${escapeHtml(state.user.name.slice(0, 2).toUpperCase())}</span><span><strong>${escapeHtml(state.user.name)}</strong><small>${escapeHtml(state.user.role)}</small></span></div></div></nav>
       <main class="dashboard-main"><div class="main-content">${state.error ? `<div class="api-error" role="alert">${icon("alerts")}<span>${escapeHtml(state.error)}</span><button type="button" data-action="refresh" class="text-button">Retry</button></div>` : ""}${state.loading ? '<div class="loading-state" role="status">Loading greenhouse data…</div>' : ""}${renderContent()}</div><footer class="app-footer"><span>Module 3 threshold model · readings are mock data</span><span>Last sync ${state.zones[0]?.reading ? formatTime(state.zones[0].reading.received_at) : "—"} <i class="connection-dot"></i></span></footer></main>
     </div><div class="toast" role="status" aria-live="polite"></div></div>`;
+  applyLocale(app);
+}
+
+function closeMobileNav(): void {
+  state.mobileNavOpen = false;
+  document.querySelector(".app-shell")?.classList.remove("is-mobile-nav-open");
+  const toggle = document.querySelector<HTMLButtonElement>(".sidebar-toggle");
+  toggle?.setAttribute("aria-expanded", "false");
+  toggle?.setAttribute("aria-label", "Open navigation menu");
 }
 
 function renderContent(): string {
@@ -854,7 +987,7 @@ function renderContent(): string {
 function showToast(message: string): void {
   const toast = document.querySelector<HTMLDivElement>(".toast");
   if (!toast) return;
-  toast.textContent = message;
+  toast.textContent = translateText(message);
   toast.classList.add("is-visible");
   window.clearTimeout(state.toastTimer);
   state.toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), 2800);
@@ -941,6 +1074,7 @@ async function runUserAction(action: () => Promise<unknown>, successMessage: str
     await action();
     if (state.user?.role === "admin") {
       state.users = await getUsers();
+      state.usersExpanded = false;
       const updatedCurrentUser = state.users.find((user) => user.id === state.user?.id);
       if (updatedCurrentUser) state.user = updatedCurrentUser;
     }
@@ -958,6 +1092,7 @@ async function loadUsers(): Promise<void> {
   if (state.user?.role !== "admin") return;
   try {
     state.users = await getUsers();
+    state.usersExpanded = false;
     state.error = "";
   } catch (error) {
     state.error = describeError(error);
@@ -1075,6 +1210,18 @@ document.addEventListener("focusout", (event: FocusEvent) => {
 });
 
 document.addEventListener("keydown", (event: KeyboardEvent) => {
+  if (event.key === "Escape" && state.languageMenuOpen) {
+    state.languageMenuOpen = false;
+    render();
+    document.querySelector<HTMLButtonElement>(".language-trigger")?.focus();
+    return;
+  }
+  if (event.key === "Escape" && state.mobileNavOpen) {
+    closeMobileNav();
+    render();
+    document.querySelector<HTMLButtonElement>(".sidebar-toggle")?.focus();
+    return;
+  }
   if (event.key === "Escape" && state.zoneMenuOpen) {
     state.zoneMenuOpen = false;
     render();
@@ -1090,9 +1237,9 @@ document.addEventListener("submit", (event: SubmitEvent) => {
     const data = new FormData(form);
     void runUserAction(async () => {
       state.user = await updateMyProfile({
-        name: String(data.get("name") ?? "").trim(),
-        email: String(data.get("email") ?? "").trim(),
-        phone_number: String(data.get("phone_number") ?? "").trim(),
+        name: normalizeDigits(String(data.get("name") ?? "")).trim(),
+        email: normalizeDigits(String(data.get("email") ?? "")).trim(),
+        phone_number: normalizeDigits(String(data.get("phone_number") ?? "")).trim(),
         ...(String(data.get("password") ?? "") ? { password: String(data.get("password")) } : {}),
       });
     }, "Your account details were updated.");
@@ -1102,9 +1249,9 @@ document.addEventListener("submit", (event: SubmitEvent) => {
     event.preventDefault();
     const data = new FormData(form);
     void runUserAction(() => createUser({
-      name: String(data.get("name") ?? "").trim(),
-      email: String(data.get("email") ?? "").trim(),
-      phone_number: String(data.get("phone_number") ?? "").trim(),
+      name: normalizeDigits(String(data.get("name") ?? "")).trim(),
+      email: normalizeDigits(String(data.get("email") ?? "")).trim(),
+      phone_number: normalizeDigits(String(data.get("phone_number") ?? "")).trim(),
       password: String(data.get("password") ?? ""),
       role: data.get("role") === "admin" ? "admin" : "operator",
     }), "User created.");
@@ -1118,9 +1265,16 @@ document.addEventListener("submit", (event: SubmitEvent) => {
 document.addEventListener("click", (event: MouseEvent) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
+  if (state.mobileNavOpen && !target.closest(".dashboard-nav, .sidebar-toggle")) {
+    closeMobileNav();
+  }
   const control = target.closest<HTMLElement>("[data-action]");
   if (state.zoneMenuOpen && !target.closest(".zone-picker")) {
     state.zoneMenuOpen = false;
+    render();
+  }
+  if (state.languageMenuOpen && !target.closest(".language-picker")) {
+    state.languageMenuOpen = false;
     render();
   }
   if (!control) return;
@@ -1131,6 +1285,7 @@ document.addEventListener("click", (event: MouseEvent) => {
       if (nextView && views.includes(nextView as View)) {
         state.view = nextView as View;
         state.zoneMenuOpen = false;
+        state.mobileNavOpen = false;
         render();
         if (state.view === "Settings" && state.user?.role === "admin") void loadUsers();
         if (["Analytics", "Weather", "Trends"].includes(state.view)) void refreshDashboard();
@@ -1144,10 +1299,46 @@ document.addEventListener("click", (event: MouseEvent) => {
       render();
       break;
     }
-    case "toggle-sidebar": {
-      state.sidebarCollapsed = !state.sidebarCollapsed;
-      localStorage.setItem("nileguard.sidebar-collapsed", String(state.sidebarCollapsed));
+    case "toggle-language-menu": {
+      state.languageMenuOpen = !state.languageMenuOpen;
+      state.zoneMenuOpen = false;
       render();
+      if (state.languageMenuOpen) {
+        document.querySelector<HTMLButtonElement>(".language-option.is-selected")?.focus();
+      }
+      break;
+    }
+    case "select-language": {
+      const locale = control.dataset.locale;
+      if (locale === "en" || locale === "ar") {
+        state.locale = locale;
+        state.languageMenuOpen = false;
+        localStorage.setItem("nileguard.locale", state.locale);
+        render();
+        document.querySelector<HTMLButtonElement>(".language-trigger")?.focus();
+      }
+      break;
+    }
+    case "load-more-users": {
+      state.usersExpanded = true;
+      render();
+      break;
+    }
+    case "toggle-sidebar": {
+      if (mobileNavigationQuery.matches) {
+        state.mobileNavOpen = !state.mobileNavOpen;
+      } else {
+        state.sidebarCollapsed = !state.sidebarCollapsed;
+        localStorage.setItem("nileguard.sidebar-collapsed", String(state.sidebarCollapsed));
+      }
+      render();
+      if (mobileNavigationQuery.matches) {
+        if (state.mobileNavOpen) {
+          document.querySelector<HTMLButtonElement>(".dashboard-nav__item")?.focus();
+        } else {
+          document.querySelector<HTMLButtonElement>(".sidebar-toggle")?.focus();
+        }
+      }
       break;
     }
     case "toggle-zone-menu": {
@@ -1169,7 +1360,12 @@ document.addEventListener("click", (event: MouseEvent) => {
     case "delete-user": {
       const userId = control.dataset.user;
       const user = state.users.find((entry) => entry.id === userId);
-      if (userId && user && window.confirm(`Permanently delete ${user.name}'s account? This cannot be undone.`)) {
+      const confirmation = user
+        ? state.locale === "ar"
+          ? `هل تريد حذف حساب ${user.name} نهائيًا؟ لا يمكن التراجع عن هذا الإجراء.`
+          : `Permanently delete ${user.name}'s account? This cannot be undone.`
+        : "";
+      if (userId && user && window.confirm(confirmation)) {
         void runUserAction(() => deleteUser(userId), "User permanently deleted.");
       }
       break;
@@ -1229,6 +1425,11 @@ document.addEventListener("click", (event: MouseEvent) => {
 
 onAuthenticationExpired(() => {
   clearUserSession("Your session expired. Sign in again to continue.");
+});
+
+mobileNavigationQuery.addEventListener("change", () => {
+  state.mobileNavOpen = false;
+  render();
 });
 
 async function initialize(): Promise<void> {

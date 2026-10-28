@@ -73,7 +73,7 @@
   gap: var(--space-4);
   padding-inline: var(--gutter-page);
   border-bottom: var(--border-width) solid var(--color-border);
-  background: rgb(244 246 242 / 94%);
+  background: color-mix(in srgb, var(--color-canvas) 94%, transparent);
   backdrop-filter: blur(14px);
 }
 
@@ -192,7 +192,7 @@
 }
 
 .metric-card__unit {
-  margin-left: var(--space-1);
+  margin-inline-start: var(--space-1);
   color: var(--color-ink-subtle);
   font-family: var(--font-sans);
   font-size: var(--text-xs);

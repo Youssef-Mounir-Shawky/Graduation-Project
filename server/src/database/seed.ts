@@ -4,12 +4,12 @@ import type { Pool, PoolClient } from "pg";
 
 const crops = [
   {
-    id: "lettuce",
-    name: "Lettuce",
-    threshold: 30,
-    minimum: 35,
-    maximum: 65,
-    stages: ["seedling", "vegetative", "heading", "maturity"],
+    id: "tomato",
+    name: "Tomato",
+    threshold: 35,
+    minimum: 40,
+    maximum: 70,
+    stages: ["seedling", "vegetative", "flowering", "fruiting", "maturity"],
   },
   {
     id: "potato",
@@ -22,9 +22,9 @@ const crops = [
 ] as const;
 
 const demoZones = [
-  { id: "zone-lettuce-clay", name: "Lettuce · Clay soil", crop: "lettuce", soil: "clay", stage: "vegetative", node: "node-lettuce-clay", moisture: 41 },
-  { id: "zone-lettuce-sandy", name: "Lettuce · Sandy soil", crop: "lettuce", soil: "sandy", stage: "heading", node: "node-lettuce-sandy", moisture: 35 },
-  { id: "zone-potato-clay", name: "Potato · Clay soil", crop: "potato", soil: "clay", stage: "bulking", node: "node-potato-clay", moisture: 38 },
+  { id: "zone-tomato-loam", name: "Tomato · Loam soil", crop: "tomato", soil: "loam", stage: "vegetative", node: "node-tomato-loam", moisture: 43 },
+  { id: "zone-tomato-sandy", name: "Tomato · Sandy soil", crop: "tomato", soil: "sandy", stage: "flowering", node: "node-tomato-sandy", moisture: 38 },
+  { id: "zone-potato-loam", name: "Potato · Loam soil", crop: "potato", soil: "loam", stage: "bulking", node: "node-potato-loam", moisture: 38 },
   { id: "zone-potato-sandy", name: "Potato · Sandy soil", crop: "potato", soil: "sandy", stage: "tuber-initiation", node: "node-potato-sandy", moisture: 32 },
 ] as const;
 
@@ -43,18 +43,18 @@ function mockMeasurement(zone: typeof demoZones[number], timestamp: Date, index:
   const hour = timestamp.getUTCHours();
   const daylight = Math.max(0, Math.sin(((hour - 6) / 12) * Math.PI));
   const seasonal = Math.sin((index / count) * Math.PI * 2);
-  const soilOffset = zone.soil === "clay" ? 5 : -1;
-  const cropOffset = zone.crop === "lettuce" ? 2 : 0;
+  const soilOffset = zone.soil === "loam" ? 2 : -1;
+  const cropOffset = zone.crop === "tomato" ? 2 : 0;
   const moisture = zone.moisture + soilOffset + cropOffset
-    + Math.sin(index / (zone.soil === "clay" ? 14 : 7)) * (zone.soil === "clay" ? 3 : 6)
-    - daylight * (zone.soil === "clay" ? 1.5 : 3);
+    + Math.sin(index / (zone.soil === "loam" ? 11 : 7)) * (zone.soil === "loam" ? 4 : 6)
+    - daylight * (zone.soil === "loam" ? 2 : 3);
   const lux = daylight * (20_000 + 2_500 * seasonal);
-  const temperatureBase = zone.crop === "lettuce" ? 20 : 18;
+  const temperatureBase = zone.crop === "tomato" ? 22 : 18;
   const temperature = temperatureBase + seasonal * 1.8 + Math.sin(((hour - 8) / 24) * Math.PI * 2) * 3;
   const humidity = 67 - daylight * 10 - seasonal * 4 + Math.sin(index / 19) * 4;
   const co2 = 425 + daylight * 170 + Math.sin(index / 35) * 35;
-  const soilPh = (zone.crop === "lettuce" ? 6.3 : 5.6)
-    + (zone.soil === "clay" ? 0.25 : -0.1)
+  const soilPh = (zone.crop === "tomato" ? 6.4 : 5.6)
+    + (zone.soil === "loam" ? 0.1 : -0.1)
     + Math.sin(index / 720) * 0.12;
   const batteryMv = 4_120 - (index / count) * 330 + Math.sin(index / 180) * 12;
 
@@ -184,7 +184,7 @@ export async function seedDatabase(database: Pool): Promise<void> {
       );
     }
     await client.query(
-      "INSERT INTO nileguard.soil_types (id, name) VALUES ('clay', 'Clay soil'), ('sandy', 'Sandy soil') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+      "INSERT INTO nileguard.soil_types (id, name) VALUES ('loam', 'Loam soil'), ('sandy', 'Sandy soil') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
     );
     await client.query("INSERT INTO nileguard.gateways (id) VALUES ('gateway-demo') ON CONFLICT (id) DO NOTHING");
 
@@ -215,9 +215,9 @@ export async function seedDatabase(database: Pool): Promise<void> {
     await seedSyntheticHistory(client);
 
     const schedules = [
-      ["schedule-lettuce-clay", "zone-lettuce-clay", 6, 12, "Drip irrigation"],
-      ["schedule-lettuce-sandy", "zone-lettuce-sandy", 6, 10, "Drip irrigation"],
-      ["schedule-potato-clay", "zone-potato-clay", 7, 18, "Drip irrigation"],
+      ["schedule-tomato-loam", "zone-tomato-loam", 6, 16, "Drip irrigation"],
+      ["schedule-tomato-sandy", "zone-tomato-sandy", 6, 14, "Drip irrigation"],
+      ["schedule-potato-loam", "zone-potato-loam", 7, 18, "Drip irrigation"],
       ["schedule-potato-sandy", "zone-potato-sandy", 7, 14, "Drip irrigation"],
     ] as const;
     for (const [id, zoneId, hour, duration, method] of schedules) {

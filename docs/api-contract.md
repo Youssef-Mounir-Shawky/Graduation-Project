@@ -49,7 +49,7 @@ Sensor features belong to each zone's `sensor_readings` history rather than the 
 | `co2_ppm` | carbon dioxide concentration, ppm |
 | `soil_ph` | soil pH |
 
-Water level is intentionally not in the schema/API until the team confirms what is measured and its unit. Reading responses include `timestamp`, `received_at`, `seq`, `gateway_id`, and `data_source` (`synthetic` or `gateway`) so test history is distinguishable from future device data. The seeded history contains about six months of hourly synthetic readings for lettuce and potato, each in clay and sandy soil. It is generated test data, not a claim of measured field values. Demo PPFD is estimated from lux and is not calibrated.
+Water level is intentionally not in the schema/API until the team confirms what is measured and its unit. Reading responses include `timestamp`, `received_at`, `seq`, `gateway_id`, and `data_source` (`synthetic` or `gateway`) so test history is distinguishable from future device data. The seeded history contains about six months of hourly synthetic readings for tomato and potato, each in loam and sandy soil. It is generated test data, not a claim of measured field values. Demo PPFD is estimated from lux and is not calibrated.
 
 ## Gateway and future hardware integration
 
@@ -67,7 +67,7 @@ The API keeps hardware-specific transport out of dashboard routes:
 
 The schema relates `users`, `crops`, `soil_types`, `gateways`, `zones`, `nodes`, `sensor_readings`, `valve_controls`, and `irrigation_schedule` using foreign keys, uniqueness constraints, and measurement checks. User emails are unique without case sensitivity; because deletion removes the row, a deleted email can be registered again. Readings have indexes on zone/time, node/time, and receipt time. A partial unique index protects gateway sequence numbers without imposing hardware identity semantics on seeded history.
 
-`PostgresRepository` implements the repository contract used by the routes and decision service. `MemoryRepository` remains available for isolated API tests. The database seed creates exactly these crop/soil combinations: lettuce/clay, lettuce/sandy, potato/clay, and potato/sandy.
+`PostgresRepository` implements the repository contract used by the routes and decision service. `MemoryRepository` remains available for isolated API tests. The database seed creates exactly these crop/soil combinations: tomato/loam, tomato/sandy, potato/loam, and potato/sandy. Tomato demo settings use a 35% interim trigger, 40–70% moisture target, standard tomato growth stages, and synthetic conditions centered around common tomato pH and temperature ranges; these are examples, not locally validated recommendations.
 
 The current decision engine is intentionally a replaceable interim moisture-threshold implementation. It is not the final crop-, soil-, climate-, or growth-stage-aware algorithm. The API response exposes the recommendation inputs and reason; a future agronomic engine can replace the decision service without changing dashboard request/response routes.
 

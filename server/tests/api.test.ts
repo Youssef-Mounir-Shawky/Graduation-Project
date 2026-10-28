@@ -23,7 +23,7 @@ describe("NileGuard repository-backed API", () => {
     assert.equal(gateway.status, 200);
     gatewayToken = gateway.body.data.token as string;
 
-    const node = await request(app).get("/api/dev/node-token/node-lettuce-clay");
+    const node = await request(app).get("/api/dev/node-token/node-tomato-loam");
     assert.equal(node.status, 200);
     nodeToken = node.body.data.token as string;
 
@@ -51,10 +51,19 @@ describe("NileGuard repository-backed API", () => {
     const zones = await request(app).get("/api/zones").set("Authorization", `Bearer ${userToken}`);
     assert.equal(zones.status, 200);
     assert.equal(zones.body.data.length, 4);
-    assert.equal(zones.body.data[0].reading.node_id, "node-lettuce-clay");
+    const tomatoLoam = zones.body.data.find((zone: { id: string }) => zone.id === "zone-tomato-loam");
+    assert.equal(tomatoLoam.crop, "Tomato");
+    assert.equal(tomatoLoam.soil_type, "loam");
+    assert.equal(tomatoLoam.reading.node_id, "node-tomato-loam");
+
+    const crops = await request(app).get("/api/crops").set("Authorization", `Bearer ${userToken}`);
+    assert.equal(crops.status, 200);
+    const tomato = crops.body.data.find((crop: { id: string }) => crop.id === "tomato");
+    assert.equal(tomato.moistureThresholdPercent, 35);
+    assert.deepEqual(tomato.stages, ["seedling", "vegetative", "flowering", "fruiting", "maturity"]);
 
     const readings = await request(app)
-      .get("/api/readings?zone_id=zone-lettuce-clay&hours=24")
+      .get("/api/readings?zone_id=zone-tomato-loam&hours=24")
       .set("Authorization", `Bearer ${userToken}`);
     assert.equal(readings.status, 200);
     assert.equal(readings.body.data.count, 24);
@@ -69,22 +78,22 @@ describe("NileGuard repository-backed API", () => {
     assert.ok(latestReading.soil_ph !== null);
 
     const historicalReadings = await request(app)
-      .get("/api/readings?zone_id=zone-lettuce-clay&hours=4392&limit=10000")
+      .get("/api/readings?zone_id=zone-tomato-loam&hours=4392&limit=10000")
       .set("Authorization", `Bearer ${userToken}`);
     assert.equal(historicalReadings.status, 200);
     assert.ok(historicalReadings.body.data.count > 0);
 
     const recommendation = await request(app)
-      .get("/api/zones/zone-lettuce-clay/recommendation")
+      .get("/api/zones/zone-tomato-loam/recommendation")
       .set("Authorization", `Bearer ${userToken}`);
     assert.equal(recommendation.status, 200);
     assert.equal(recommendation.body.data.action, "do_not_irrigate");
-    assert.match(recommendation.body.data.reason, /30% irrigation threshold/);
+    assert.match(recommendation.body.data.reason, /35% irrigation threshold/);
   });
 
   it("keeps manual valve state authoritative through new readings and reevaluation", async () => {
     const override = await request(app)
-      .put("/api/zones/zone-lettuce-clay/override")
+      .put("/api/zones/zone-tomato-loam/override")
       .set("Authorization", `Bearer ${userToken}`)
       .send({ valve_state: "off" });
     assert.equal(override.status, 200);
@@ -95,8 +104,8 @@ describe("NileGuard repository-backed API", () => {
       .set("Authorization", `Bearer ${gatewayToken}`)
       .set("X-Node-Token", nodeToken)
       .send({
-        node_id: "node-lettuce-clay",
-        zone: "zone-lettuce-clay",
+        node_id: "node-tomato-loam",
+        zone: "zone-tomato-loam",
         moisture: 10,
         temp: 27,
         humidity: 80,
@@ -114,8 +123,8 @@ describe("NileGuard repository-backed API", () => {
       .set("Authorization", `Bearer ${gatewayToken}`)
       .set("X-Node-Token", nodeToken)
       .send({
-        node_id: "node-lettuce-clay",
-        zone: "zone-lettuce-clay",
+        node_id: "node-tomato-loam",
+        zone: "zone-tomato-loam",
         moisture: 10,
         temp: 27,
         humidity: 80,
@@ -127,7 +136,7 @@ describe("NileGuard repository-backed API", () => {
     assert.equal(repeat.body.error.code, "STALE_SEQUENCE");
 
     const released = await request(app)
-      .delete("/api/zones/zone-lettuce-clay/override")
+      .delete("/api/zones/zone-tomato-loam/override")
       .set("Authorization", `Bearer ${userToken}`);
     assert.equal(released.status, 200);
     assert.equal(released.body.data.mode, "automatic");
@@ -136,7 +145,7 @@ describe("NileGuard repository-backed API", () => {
 
   it("rejects invalid sensor packets and user tokens on gateway ingestion", async () => {
     const noGatewayAuth = await request(app).post("/api/readings").send({
-      node_id: "node-lettuce-clay", zone: "zone-lettuce-clay", moisture: 40, temp: 22,
+      node_id: "node-tomato-loam", zone: "zone-tomato-loam", moisture: 40, temp: 22,
       humidity: 55, battery_mv: 3900, seq: 26, gateway_id: "gateway-demo",
     });
     assert.equal(noGatewayAuth.status, 401);
@@ -146,7 +155,7 @@ describe("NileGuard repository-backed API", () => {
       .set("Authorization", `Bearer ${userToken}`)
       .set("X-Node-Token", nodeToken)
       .send({
-        node_id: "node-lettuce-clay", zone: "zone-lettuce-clay", moisture: 40, temp: 22,
+        node_id: "node-tomato-loam", zone: "zone-tomato-loam", moisture: 40, temp: 22,
         humidity: 55, battery_mv: 3900, seq: 26, gateway_id: "gateway-demo",
       });
     assert.equal(wrongTokenType.status, 401);
@@ -155,19 +164,19 @@ describe("NileGuard repository-backed API", () => {
       .post("/api/readings")
       .set("Authorization", `Bearer ${gatewayToken}`)
       .send({
-        node_id: "node-lettuce-clay", zone: "zone-lettuce-clay", moisture: 40, temp: 22,
+        node_id: "node-tomato-loam", zone: "zone-tomato-loam", moisture: 40, temp: 22,
         humidity: 55, battery_mv: 3900, seq: 169, gateway_id: "gateway-demo",
       });
     assert.equal(missingNodeToken.status, 401);
     assert.equal(missingNodeToken.body.error.code, "NODE_AUTH_REQUIRED");
 
-    const differentNode = await request(app).get("/api/dev/node-token/node-lettuce-sandy");
+    const differentNode = await request(app).get("/api/dev/node-token/node-tomato-sandy");
     const nodeMismatch = await request(app)
       .post("/api/readings")
       .set("Authorization", `Bearer ${gatewayToken}`)
       .set("X-Node-Token", differentNode.body.data.token)
       .send({
-        node_id: "node-lettuce-clay", zone: "zone-lettuce-clay", moisture: 40, temp: 22,
+        node_id: "node-tomato-loam", zone: "zone-tomato-loam", moisture: 40, temp: 22,
         humidity: 55, battery_mv: 3900, seq: 169, gateway_id: "gateway-demo",
       });
     assert.equal(nodeMismatch.status, 403);
@@ -178,7 +187,7 @@ describe("NileGuard repository-backed API", () => {
       .set("Authorization", `Bearer ${gatewayToken}`)
       .set("X-Node-Token", nodeToken)
       .send({
-        node_id: "node-lettuce-clay", zone: "zone-lettuce-clay", moisture: 120, temp: 22,
+        node_id: "node-tomato-loam", zone: "zone-tomato-loam", moisture: 120, temp: 22,
         humidity: 55, battery_mv: 3900, seq: 26, gateway_id: "gateway-demo",
       });
     assert.equal(invalid.status, 400);
@@ -189,10 +198,10 @@ describe("NileGuard repository-backed API", () => {
     const simulation = await request(app)
       .post("/api/mock/simulate-reading")
       .set("Authorization", `Bearer ${userToken}`)
-      .send({ zone_id: "zone-lettuce-sandy" });
+      .send({ zone_id: "zone-tomato-sandy" });
     assert.equal(simulation.status, 201);
     assert.equal(simulation.body.data.readings.length, 1);
-    assert.equal(simulation.body.data.readings[0].zone, "zone-lettuce-sandy");
+    assert.equal(simulation.body.data.readings[0].zone, "zone-tomato-sandy");
 
     const unknown = await request(app)
       .post("/api/mock/simulate-reading")
@@ -207,8 +216,8 @@ describe("NileGuard repository-backed API", () => {
       .set("Authorization", `Bearer ${userToken}`)
       .send({
         name: "New Tomato Tunnel",
-        crop_id: "lettuce",
-        soil_type: "clay",
+        crop_id: "tomato",
+        soil_type: "loam",
         growth_stage: "vegetative",
         planting_date: "2026-10-01",
         moisture_target_min_percent: 30,
@@ -392,7 +401,7 @@ describe("NileGuard repository-backed API", () => {
     assert.equal(cleanup.status, 204);
 
     const invalidStage = await request(app)
-      .patch("/api/zones/zone-lettuce-clay")
+      .patch("/api/zones/zone-tomato-loam")
       .set("Authorization", `Bearer ${userToken}`)
       .send({ growth_stage: "tuber-initiation" });
     assert.equal(invalidStage.status, 400);
@@ -401,17 +410,17 @@ describe("NileGuard repository-backed API", () => {
 
   it("holds automatic irrigation when sensor data is stale", async () => {
     const repository = new MemoryRepository();
-    repository.updateNode("node-lettuce-clay", { lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString() });
+    repository.updateNode("node-tomato-loam", { lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString() });
     const staleApp = await createApp(repository);
     const staleLogin = await request(staleApp)
       .post("/api/auth/login")
       .send({ email: "farmer@nileguard.local", password: "NileGuard2026!" });
     const recommendation = await request(staleApp)
-      .get("/api/zones/zone-lettuce-clay/recommendation")
+      .get("/api/zones/zone-tomato-loam/recommendation")
       .set("Authorization", `Bearer ${staleLogin.body.data.token}`);
     assert.equal(recommendation.status, 200);
     assert.equal(recommendation.body.data.action, "hold");
     assert.match(recommendation.body.data.reason, /older than five minutes/);
-    assert.equal(repository.getValve("zone-lettuce-clay")?.state, "off");
+    assert.equal(repository.getValve("zone-tomato-loam")?.state, "off");
   });
 });
