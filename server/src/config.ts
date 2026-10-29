@@ -23,6 +23,9 @@ export const config = {
   nodeJwtSecret: readSecret("NODE_JWT_SECRET", "local-only-change-this-node-secret"),
   demoAdminEmail: process.env.DEMO_ADMIN_EMAIL ?? "farmer@nileguard.local",
   demoAdminPassword: process.env.DEMO_ADMIN_PASSWORD ?? "NileGuard2026!",
+  weatherDefaultLocation: process.env.WEATHER_DEFAULT_LOCATION ?? "nasr-city",
+  weatherCacheTtlMs: Number(process.env.WEATHER_CACHE_TTL_MS ?? 12 * 60 * 1000),
+  weatherRequestTimeoutMs: Number(process.env.WEATHER_REQUEST_TIMEOUT_MS ?? 10_000),
 };
 
 if (config.nodeEnv === "production"
@@ -36,4 +39,16 @@ if (config.nodeEnv === "production" && config.mockHardware) {
 
 if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) {
   throw new Error("PORT must be a valid TCP port.");
+}
+
+if (!["nasr-city", "new-cairo", "masr-el-gedida"].includes(config.weatherDefaultLocation)) {
+  throw new Error("WEATHER_DEFAULT_LOCATION must be nasr-city, new-cairo, or masr-el-gedida.");
+}
+
+if (!Number.isInteger(config.weatherCacheTtlMs) || config.weatherCacheTtlMs < 60_000 || config.weatherCacheTtlMs > 15 * 60_000) {
+  throw new Error("WEATHER_CACHE_TTL_MS must be between 60000 and 900000.");
+}
+
+if (!Number.isInteger(config.weatherRequestTimeoutMs) || config.weatherRequestTimeoutMs < 1000 || config.weatherRequestTimeoutMs > 60_000) {
+  throw new Error("WEATHER_REQUEST_TIMEOUT_MS must be between 1000 and 60000.");
 }

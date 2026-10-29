@@ -34,10 +34,16 @@ import {
   registerNodeSchema,
   updateProfileSchema,
   userParamsSchema,
+  weatherQuerySchema,
   zoneParamsSchema,
 } from "./schemas.js";
 import { buildAlerts, PostgresRepository } from "../repositories/postgresRepository.js";
 import { isNodeOnline } from "../services/telemetry.js";
+import {
+  openMeteoWeatherService,
+  WeatherServiceError,
+  type WeatherService,
+} from "../services/weatherService.js";
 
 function sendData(response: Response, data: unknown, status = 200): void {
   response.status(status).json({ data });
@@ -135,7 +141,11 @@ function parseUserParams(request: Request): string {
   return userParamsSchema.parse(request.params).userId;
 }
 
-export function createApiRouter(repository: NileGuardRepository, decisionEngine: DecisionEngine): Router {
+export function createApiRouter(
+  repository: NileGuardRepository,
+  decisionEngine: DecisionEngine,
+  weatherService: WeatherService = openMeteoWeatherService,
+): Router {
   const router = Router();
   const userAuth = authenticateUser(repository);
   const adminOnly = [userAuth, requireRole("admin")];
@@ -148,6 +158,35 @@ export function createApiRouter(repository: NileGuardRepository, decisionEngine:
       mock_hardware: config.mockHardware && config.nodeEnv !== "production",
       timestamp: new Date().toISOString(),
     });
+  });
+
+  router.get("/weather/locations", userAuth, async (_request, response) => {
+    try {
+      sendData(response, await weatherService.listLocations());
+    } catch (error) {
+      if (error instanceof WeatherServiceError) {
+        if (error.retryAfterSeconds !== undefined) response.set("Retry-After", String(error.retryAfterSeconds));
+        throw new ApiError(error.status, error.code, error.message);
+      }
+      throw error;
+    }
+  });
+
+  router.get("/weather", userAuth, async (request, response) => {
+    const query = weatherQuerySchema.parse(request.query);
+    try {
+      sendData(response, await weatherService.getWeather(
+        query.location,
+        query.latitude,
+        query.longitude,
+      ));
+    } catch (error) {
+      if (error instanceof WeatherServiceError) {
+        if (error.retryAfterSeconds !== undefined) response.set("Retry-After", String(error.retryAfterSeconds));
+        throw new ApiError(error.status, error.code, error.message);
+      }
+      throw error;
+    }
   });
 
   router.post("/auth/login", async (request, response) => {

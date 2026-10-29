@@ -116,6 +116,33 @@ export interface ApiReadingsResponse {
   count: number;
 }
 
+export interface ApiWeatherLocation {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  timezone?: string;
+  elevation?: number | null;
+  preset?: boolean;
+}
+
+export type ApiWeatherValue = string | number | boolean | null;
+
+export interface ApiWeather {
+  source: "open-meteo";
+  attribution: string;
+  retrieved_at: string;
+  location: ApiWeatherLocation;
+  units: {
+    current: Record<string, string>;
+    hourly: Record<string, string>;
+    daily: Record<string, string>;
+  };
+  current: Record<string, ApiWeatherValue>;
+  hourly: Record<string, Array<string | number | null>>;
+  daily: Record<string, Array<string | number | null>>;
+}
+
 export interface ApiSession {
   token: string;
   user: ApiUser;

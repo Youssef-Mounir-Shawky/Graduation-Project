@@ -16,6 +16,10 @@ Open `http://127.0.0.1:5173` in Chrome. Vite serves the UI and proxies `/api` to
 
 The server reads its existing `DATABASE_URL` setting at runtime. Keep credentials in the local environment file; do not commit it. The database objects live in the dedicated `nileguard` schema, so the app does not need `CREATE` permission on PostgreSQL's `public` schema.
 
+## Weather data
+
+The authenticated backend weather endpoints use the key-free Open-Meteo Forecast and Geocoding APIs directly; weather does not depend on sensor readings or add database tables. `GET /api/weather/locations` resolves Nasr City, New Cairo, and Masr El Gedida (Heliopolis) by name and verifies the returned match is in Cairo Governorate, Egypt. `GET /api/weather?location=nasr-city` returns current conditions, 24 hourly forecast points, and 7 daily forecast points, including provider units and location-local timestamps. The default preset is configurable with `WEATHER_DEFAULT_LOCATION` (`nasr-city`, `new-cairo`, or `masr-el-gedida`). Forecast responses are cached in process memory for 12 minutes by location, resolved coordinates, and request parameters; set `WEATHER_CACHE_TTL_MS` to another value from 60000 to 900000. `WEATHER_REQUEST_TIMEOUT_MS` controls provider request timeout (1000–60000 ms). For future field-specific forecasts, pass both `latitude` and `longitude` query parameters instead of a preset; node recording intervals remain independent and unchanged.
+
 ## Initialize a shared Neon database
 
 The project applies its SQL migrations itself; do not paste the migration into Neon's SQL editor. The backend schema-qualifies database objects, so Neon's pooled endpoint works without a `search_path` startup parameter. Keep `sslmode=require` in the Neon connection URL. With the local `DATABASE_URL` set to the new Neon database, open a terminal at the repository root and run:

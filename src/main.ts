@@ -12,6 +12,8 @@ import {
   getRecommendations,
   getSchedule,
   getSessionToken,
+  getWeather,
+  getWeatherLocations,
   getUsers,
   getZones,
   login,
@@ -29,15 +31,17 @@ import type {
   ApiReading,
   ApiScheduleEntry,
   ApiUser,
+  ApiWeather,
+  ApiWeatherLocation,
   ApiZone,
   ApiHealth,
 } from "./api/types.js";
 
-type View = "Overview" | "Zones" | "Irrigation" | "Analytics" | "Weather" | "Trends" | "Alerts" | "Settings";
+type View = "Overview" | "Zones" | "Irrigation" | "Analytics" | "Weather Forecast" | "Trends" | "Alerts" | "Settings";
 type TimeRange = "24 hours" | "7 days" | "30 days" | "6 months";
 type Locale = "en" | "ar";
 
-const views: View[] = ["Overview", "Zones", "Irrigation", "Analytics", "Weather", "Trends", "Alerts", "Settings"];
+const views: View[] = ["Overview", "Zones", "Irrigation", "Analytics", "Weather Forecast", "Trends", "Alerts", "Settings"];
 const HISTORY_HOURS = 24 * 183;
 const mobileNavigationQuery = window.matchMedia("(max-width: 56rem)");
 const RANGE_HOURS: Record<TimeRange, number> = {
@@ -55,6 +59,7 @@ const iconPaths: Record<string, string> = {
   irrigation: '<path d="M12 22a7 7 0 0 0 7-7c0-4-7-13-7-13S5 11 5 15a7 7 0 0 0 7 7Z"/><path d="M9 16a3 3 0 0 0 3 3"/>',
   analytics: '<path d="M4 19V5M4 19h16"/><path d="m7 15 4-4 3 2 5-7"/>',
   weather: '<path d="M7 18a4 4 0 1 1 .8-7.9A5.5 5.5 0 0 1 18.5 12 3 3 0 0 1 18 18Z"/><path d="M12 20v2m5-3 1.5 1.5M7 19l-1.5 1.5"/>',
+  forecast: '<path d="M3 12h3l2-7 4 14 2-7h7"/><path d="M3 19h18"/>',
   trends: '<path d="M3 3v18h18"/><path d="m7 14 4-4 4 3 6-7"/>',
   alerts: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.6a8 8 0 0 1-1.7 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.7-1l-1.7.6-1.4-2.4 1.4-1.1a7 7 0 0 1 0-2l-1.4-1.1 1.4-2.4 1.7.6a8 8 0 0 1 1.7-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.7 1l1.7-.6 1.4 2.4-1.4 1.1a7 7 0 0 1 0 2Z" transform="translate(-1 -1)"/>',
@@ -83,6 +88,13 @@ const state: {
   alerts: ApiAlert[];
   schedule: ApiScheduleEntry[];
   users: ApiUser[];
+  weatherLocations: ApiWeatherLocation[];
+  weather: ApiWeather | null;
+  selectedWeatherLocationId: string;
+  weatherLoading: boolean;
+  weatherError: string;
+  weatherRequestId: number;
+  weatherLastAttemptAt: number;
   readings: ApiReading[];
   historyReadings: ApiReading[];
   selectedZoneId: string;
@@ -90,6 +102,7 @@ const state: {
   theme: "light" | "dark";
   locale: Locale;
   languageMenuOpen: boolean;
+  weatherLocationMenuOpen: boolean;
   sidebarCollapsed: boolean;
   mobileNavOpen: boolean;
   zoneMenuOpen: boolean;
@@ -111,6 +124,13 @@ const state: {
   alerts: [],
   schedule: [],
   users: [],
+  weatherLocations: [],
+  weather: null,
+  selectedWeatherLocationId: "",
+  weatherLoading: false,
+  weatherError: "",
+  weatherRequestId: 0,
+  weatherLastAttemptAt: 0,
   readings: [],
   historyReadings: [],
   selectedZoneId: "",
@@ -118,6 +138,7 @@ const state: {
   theme: localStorage.getItem("nileguard.theme") === "dark" ? "dark" : "light",
   locale: localStorage.getItem("nileguard.locale") === "ar" ? "ar" : "en",
   languageMenuOpen: false,
+  weatherLocationMenuOpen: false,
   sidebarCollapsed: localStorage.getItem("nileguard.sidebar-collapsed") === "true",
   mobileNavOpen: false,
   zoneMenuOpen: false,
@@ -306,7 +327,11 @@ function renderLanguageSelect(className = ""): string {
 
 function renderNav(): string {
   return views.map((view) => {
-    const iconName = view.toLowerCase() === "overview" ? "overview" : view.toLowerCase();
+    const iconName = view === "Weather Forecast"
+      ? "weather"
+      : view.toLowerCase() === "overview"
+        ? "overview"
+        : view.toLowerCase();
     const pendingAlerts = state.alerts.filter((alert) => alert.severity !== "info").length;
     return `<button class="dashboard-nav__item ${state.view === view ? "is-active" : ""}" type="button" data-action="navigate" data-view="${view}" ${state.view === view ? 'aria-current="page"' : ""}>${icon(iconName)}<span>${view}</span>${view === "Alerts" && pendingAlerts > 0 ? `<span class="nav-count">${pendingAlerts}</span>` : ""}</button>`;
   }).join("");
@@ -422,41 +447,6 @@ function renderPhPie(readings: ApiReading[]): string {
     <div class="ph-donut-layout"><svg class="ph-pie" viewBox="0 0 160 160" role="img" aria-label="Pie chart of soil pH readings across three ranges">${segments}</svg>
       <ul class="ph-donut__legend">${categories.map((category) => `<li><span><i class="legend-dot legend-dot--${category.color}"></i>${category.label}</span><strong>${((category.count / phValues.length) * 100).toFixed(1)}%</strong></li>`).join("")}</ul>
     </div><div class="chart-tooltip" aria-hidden="true"></div><p class="analytics-note">Descriptive ranges only; they are not crop-specific pH recommendations.</p>
-  </section>`;
-}
-
-function renderHumidityPie(readings: ApiReading[]): string {
-  const values = readings.map((reading) => reading.humidity).filter(Number.isFinite);
-  if (!values.length) {
-    return `<section class="panel analytics-chart-panel"><div class="panel__header"><div><p class="eyebrow">Observed humidity bands</p><h2>Relative humidity distribution</h2></div></div><div class="chart-empty">No relative humidity measurements are available for this zone.</div></section>`;
-  }
-  const categories = [
-    { label: "Below 40% RH", count: values.filter((value) => value < 40).length, color: "primary" },
-    { label: "40–70% RH", count: values.filter((value) => value >= 40 && value <= 70).length, color: "warning" },
-    { label: "Above 70% RH", count: values.filter((value) => value > 70).length, color: "info" },
-  ];
-  let angle = -Math.PI / 2;
-  const segments = categories.map((category) => {
-    if (!category.count) return "";
-    if (category.count === values.length) {
-      return `<circle class="ph-pie__segment ph-pie__segment--${category.color}" cx="80" cy="80" r="62" ${chartTip(category.label, [`Readings: ${category.count.toLocaleString()}`, "Share: 100.0%"])}/>`;
-    }
-    const nextAngle = angle + (category.count / values.length) * Math.PI * 2;
-    const x1 = 80 + 62 * Math.cos(angle);
-    const y1 = 80 + 62 * Math.sin(angle);
-    const x2 = 80 + 62 * Math.cos(nextAngle);
-    const y2 = 80 + 62 * Math.sin(nextAngle);
-    const largeArc = nextAngle - angle > Math.PI ? 1 : 0;
-    const path = `M 80 80 L ${x1.toFixed(2)} ${y1.toFixed(2)} A 62 62 0 ${largeArc} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`;
-    const segment = `<path class="ph-pie__segment ph-pie__segment--${category.color}" d="${path}" ${chartTip(category.label, [`Readings: ${category.count.toLocaleString()}`, `Share: ${((category.count / values.length) * 100).toFixed(1)}%`])}/>`;
-    angle = nextAngle;
-    return segment;
-  }).join("");
-  return `<section class="panel analytics-chart-panel">
-    <div class="panel__header"><div><p class="eyebrow">Observed humidity bands</p><h2>Relative humidity distribution</h2></div><span class="status status--info">${values.length.toLocaleString()} readings</span></div>
-    <div class="ph-donut-layout"><svg class="ph-pie" viewBox="0 0 160 160" role="img" aria-label="Pie chart of relative humidity readings across three descriptive ranges">${segments}</svg>
-      <ul class="ph-donut__legend">${categories.map((category) => `<li><span><i class="legend-dot legend-dot--${category.color}"></i>${category.label}</span><strong>${((category.count / values.length) * 100).toFixed(1)}%</strong></li>`).join("")}</ul>
-    </div><div class="chart-tooltip" aria-hidden="true"></div><p class="analytics-note">Descriptive ranges only; they are not crop-specific humidity recommendations.</p>
   </section>`;
 }
 
@@ -632,41 +622,254 @@ function renderAnalytics(): string {
 }
 
 function renderWeather(): string {
-  const zone = selectedZone();
-  const readings = state.historyReadings;
-  const temp = rangeAverages(readings, "temp");
-  const humidity = rangeAverages(readings, "humidity");
-  const co2 = rangeAverages(readings, "co2_ppm");
-  const climatePair = renderRelationshipChart(readings, {
-    title: "Temperature, humidity & CO₂",
-    xKey: "temp",
-    xLabel: "Air temperature",
-    xUnit: "°C",
-    yKey: "humidity",
-    yLabel: "Relative humidity",
-    yUnit: "% RH",
-    sizeKey: "co2_ppm",
-    sizeLabel: "CO₂ concentration",
-    sizeUnit: " ppm",
-    bubble: true,
-  });
-  const latest = zone?.reading;
-  const origin = latest?.data_source ?? "no current reading";
-  const historySources = Array.from(new Set(readings.map((reading) => reading.data_source))).join(" + ") || "no stored readings";
-  return `<div class="dashboard-heading analytics-heading"><div><p class="eyebrow">Field climate · ${escapeHtml(state.range)} · ${escapeHtml(historySources)}</p><h1>Weather</h1><p class="page-intro">Temperature, relative humidity, and CO₂ concentration from stored zone readings; this is sensor history, not a forecast.</p></div><div class="analytics-controls">${renderRangePicker("Weather time range")}${renderZonePicker(zone)}</div></div>
-    <div class="analytics-summary-grid analytics-summary-grid--weather">
-      ${renderSummaryCard("Air temperature", latest ? latest.temp.toFixed(1) : "—", latest ? "°C" : "", `Latest · ${origin}`)}
-      ${renderSummaryCard("Relative humidity", latest ? latest.humidity.toFixed(1) : "—", latest ? "% RH" : "", `Latest · ${origin}`)}
-      ${renderSummaryCard("CO₂ concentration", latest?.co2_ppm == null ? "—" : latest.co2_ppm.toFixed(0), latest?.co2_ppm == null ? "" : " ppm", `Latest · ${origin}`)}
+  const weather = state.weather;
+  const current = weather?.current;
+  const unit = (key: string) => weather?.units.current[key] ?? "";
+  const value = (key: string, digits = 1) => formatWeatherValue(current?.[key], digits);
+  const locationName = weather?.location.name ?? "Selected Cairo area";
+  const header = `<div class="dashboard-heading weather-heading"><div><p class="eyebrow">Live conditions · Open-Meteo</p><h1>Weather</h1><p class="page-intro">Current outdoor weather for the selected farm area, independent of greenhouse sensor readings.</p></div>${renderWeatherLocationPicker()}</div>`;
+  if (state.weatherLoading) {
+    return `${header}<section class="weather-loading-grid" role="status" aria-label="Loading weather forecast">
+      <div class="panel weather-skeleton weather-skeleton--current"><span></span><span></span><span></span><span></span></div>
+      <div class="panel weather-skeleton"><span></span><span></span><span></span></div>
+      <div class="panel weather-skeleton"><span></span><span></span><span></span></div>
+      <div class="panel weather-skeleton weather-skeleton--daily"><span></span><span></span><span></span></div>
+    </section>`;
+  }
+  if (state.weatherError) return `${header}${renderWeatherError()}`;
+
+  const currentContent = weather && current
+    ? `<section class="panel current-weather-card">
+            <div class="current-weather-card__headline">
+              <div><p class="eyebrow">${escapeHtml(locationName)} · ${escapeHtml(weather.location.timezone ?? "local time")}</p><h2>${escapeHtml(weatherCodeDescription(current.weather_code))}</h2><p>${escapeHtml(formatWeatherTimestamp(current.time, weather.location.timezone, true))}</p></div>
+              <strong class="current-weather-card__temperature">${escapeHtml(value("temperature_2m"))}<small>${escapeHtml(unit("temperature_2m"))}</small></strong>
+            </div>
+            <div class="weather-metric-grid">
+              ${renderWeatherMetric("Feels like", value("apparent_temperature"), unit("apparent_temperature"), "thermometer")}
+              ${renderWeatherMetric("Humidity", value("relative_humidity_2m", 0), unit("relative_humidity_2m"), "humidity")}
+              ${renderWeatherMetric("Wind speed", value("wind_speed_10m"), unit("wind_speed_10m"), "forecast")}
+              ${renderWeatherMetric("Wind direction", value("wind_direction_10m", 0), unit("wind_direction_10m"), "forecast")}
+              ${renderWeatherMetric("Cloud cover", value("cloud_cover", 0), unit("cloud_cover"), "weather")}
+              ${renderWeatherMetric("Pressure", value("pressure_msl"), unit("pressure_msl"), "analytics")}
+            </div>
+          </section>`
+        : '<div class="panel weather-state">Current weather is not available for this location.</div>';
+  const hourlyCharts = weather ? renderWeatherHourlyCharts(weather) : "";
+  const dailyForecast = weather ? renderWeatherDailyForecast(weather) : "";
+  return `${header}
+    ${currentContent}
+    ${hourlyCharts}
+    ${dailyForecast}
+    ${weather ? `<p class="weather-attribution">${escapeHtml(weather.attribution)} · Updated ${escapeHtml(formatWeatherTimestamp(weather.retrieved_at, "UTC", true))}</p>` : ""}`;
+}
+
+function formatWeatherValue(value: unknown, digits = 1): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "—";
+}
+
+function weatherCodeDescription(value: unknown): string {
+  if (typeof value !== "number") return "Current conditions";
+  if (value === 0) return "Clear sky";
+  if (value === 1) return "Mainly clear";
+  if (value === 2) return "Partly cloudy";
+  if (value === 3) return "Overcast";
+  if ([45, 48].includes(value)) return "Fog";
+  if ([51, 53, 55, 56, 57].includes(value)) return "Drizzle";
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(value)) return "Rain";
+  if ([71, 73, 75, 77, 85, 86].includes(value)) return "Snow";
+  if ([95, 96, 99].includes(value)) return "Thunderstorm";
+  return "Variable conditions";
+}
+
+function formatWeatherTimestamp(value: unknown, timeZone?: string, includeDate = false): string {
+  if (typeof value !== "string") return "—";
+  const includesOffset = /[zZ]|[+-]\d{2}:\d{2}$/.test(value);
+  const timestamp = new Date(includesOffset ? value : `${value}Z`);
+  if (Number.isNaN(timestamp.getTime())) return value;
+  try {
+    return new Intl.DateTimeFormat(state.locale === "ar" ? "ar" : "en", {
+      ...(includeDate ? { dateStyle: "medium" as const } : {}),
+      timeStyle: "short",
+      timeZone: includesOffset ? timeZone ?? "UTC" : "UTC",
+    }).format(timestamp);
+  } catch {
+    return value;
+  }
+}
+
+function formatWeatherDate(value: unknown): string {
+  if (typeof value !== "string") return "—";
+  const date = new Date(`${value}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  try {
+    return new Intl.DateTimeFormat(state.locale === "ar" ? "ar" : "en", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    }).format(date);
+  } catch {
+    return value;
+  }
+}
+
+function renderWeatherMetric(label: string, value: string, unit: string, iconName: string): string {
+  return `<article class="weather-metric"><span class="weather-metric__icon">${icon(iconName)}</span><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}<small>${escapeHtml(unit)}</small></strong></article>`;
+}
+
+function renderWeatherLocationPicker(): string {
+  const selectedLocation = state.weatherLocations.find((location) => location.id === state.selectedWeatherLocationId);
+  const selectedName = selectedLocation?.name ?? state.weather?.location.name ?? "Selected Cairo area";
+  const options = state.weatherLocations.map((location) =>
+    `<button class="language-option weather-location-option ${location.id === state.selectedWeatherLocationId ? "is-selected" : ""}" type="button" role="option" aria-selected="${location.id === state.selectedWeatherLocationId}" data-action="select-weather-location" data-location="${escapeHtml(location.id)}">${escapeHtml(location.name)}</button>`,
+  ).join("");
+  const isArabic = state.locale === "ar";
+  return `<div class="weather-location-picker language-picker">
+    <span>Weather location</span>
+    <button class="language-trigger weather-location-trigger" type="button" data-action="toggle-weather-location-menu" aria-haspopup="listbox" aria-expanded="${state.weatherLocationMenuOpen}" aria-controls="weather-location-options" aria-label="${isArabic ? "موقع الطقس" : "Weather location"}" ${state.weatherLoading || !options ? "disabled" : ""}>
+      <span>${escapeHtml(selectedName)}</span>${icon("chevronDown", "language-chevron")}
+    </button>
+    ${state.weatherLocationMenuOpen ? `<div class="language-menu weather-location-menu" id="weather-location-options" role="listbox" aria-label="${isArabic ? "موقع الطقس" : "Weather location"}">${options}</div>` : ""}
+  </div>`;
+}
+
+function renderWeatherError(): string {
+  return `<div class="panel weather-state weather-state--error" role="alert"><div><strong>Weather data is unavailable.</strong><p>${escapeHtml(state.weatherError)}</p></div><button class="button button--primary" type="button" data-action="retry-weather">Retry</button></div>`;
+}
+
+function weatherSeriesValue(series: ApiWeather["hourly"] | ApiWeather["daily"], key: string, index: number): string | number | null {
+  const values = series[key];
+  return Array.isArray(values) ? values[index] ?? null : null;
+}
+
+function renderWeatherHourlyCharts(weather: ApiWeather): string {
+  const times = weather.hourly.time ?? [];
+  const temperature = times.map((time, index) => ({
+    timestamp: time,
+    value: weatherSeriesValue(weather.hourly, "temperature_2m", index),
+  }));
+  const humidity = times.map((time, index) => ({
+    timestamp: time,
+    value: weatherSeriesValue(weather.hourly, "relative_humidity_2m", index),
+  }));
+  return `<section class="forecast-section weather-hourly-section">
+    <div class="panel__header"><div><p class="eyebrow">Next 24 hours</p><h2>Hourly forecast</h2></div></div>
+    <div class="analytics-chart-grid weather-chart-grid">
+      ${renderWeatherChart("Air temperature", temperature, weather.units.hourly.temperature_2m ?? "", "primary", "max")}
+      ${renderWeatherChart("Humidity", humidity, weather.units.hourly.relative_humidity_2m ?? "%", "info", "average")}
     </div>
-    <div class="analytics-chart-grid analytics-chart-grid--weather">
-      ${renderSeriesPanel("Air temperature", temp, "°C", "warning")}
-      ${renderSeriesPanel("Relative humidity", humidity, "% RH", "primary")}
-      ${renderSeriesPanel("CO₂ concentration", co2, " ppm", "info", { area: true, decimals: 0 })}
-      ${renderHistogram("Air temperature", temp, "°C", "warning")}
-      ${climatePair}
-      ${renderHumidityPie(readings)}
-    </div>`;
+  </section>`;
+}
+
+function renderWeatherChart(
+  title: string,
+  values: Array<{ timestamp: string | number | null; value: string | number | null }>,
+  unit: string,
+  color: "primary" | "info",
+  summary: "max" | "average",
+): string {
+  const width = 760;
+  const height = 250;
+  const left = 58;
+  const right = width - 18;
+  const top = 18;
+  const bottom = 202;
+  const points = values.flatMap((point, index) =>
+    typeof point.timestamp === "string" && typeof point.value === "number" && Number.isFinite(point.value)
+      ? [{ timestamp: point.timestamp, value: point.value, index }]
+      : [],
+  );
+  const numericValues = points.map(({ value }) => value);
+  const dataMinimum = numericValues.length ? Math.min(...numericValues) : 0;
+  const dataMaximum = numericValues.length ? Math.max(...numericValues) : 0;
+  const padding = dataMinimum === dataMaximum
+    ? Math.max(Math.abs(dataMaximum) * 0.08, 1)
+    : (dataMaximum - dataMinimum) * 0.12;
+  const unitLabel = unit ? ` ${unit}` : "";
+  const summaryValue = numericValues.length
+    ? summary === "max"
+      ? `${dataMaximum.toFixed(1)}${unitLabel}`
+      : `${(numericValues.reduce((total, value) => total + value, 0) / numericValues.length).toFixed(0)}${unitLabel}`
+    : "—";
+  const summaryLabel = summary === "max" ? "Max" : "Avg";
+  const header = `<div class="panel__header"><div><p class="eyebrow">Next 24h</p><h2>${escapeHtml(title)}</h2></div><div class="analytics-chart-summary"><strong>${escapeHtml(summaryValue)}</strong><span>${summaryLabel}</span></div></div>`;
+  if (!points.length) {
+    return `<section class="panel analytics-chart-panel weather-chart-panel">${header}<div class="chart-empty">${escapeHtml(title)} data is unavailable.</div></section>`;
+  }
+
+  const minimum = dataMinimum - padding;
+  const maximum = dataMaximum + padding;
+  const positionY = (value: number) => bottom - ((value - minimum) / Math.max(maximum - minimum, 1)) * (bottom - top);
+  const coords = points.map((point) => ({
+    ...point,
+    x: left + (point.index / Math.max(values.length - 1, 1)) * (right - left),
+    y: positionY(point.value),
+  }));
+  const grid = Array.from({ length: 4 }, (_, index) => {
+    const value = maximum - ((maximum - minimum) * index) / 3;
+    const y = top + ((bottom - top) * index) / 3;
+    return `<line class="analytics-gridline" x1="${left}" y1="${y}" x2="${right}" y2="${y}"/><text class="analytics-axis-label" x="${left - 8}" y="${y + 4}" text-anchor="end">${value.toFixed(1)}${escapeHtml(unitLabel)}</text>`;
+  }).join("");
+  const axisLabels = `<text class="analytics-axis-label" x="${left}" y="230">${escapeHtml(formatWeatherTimestamp(points[0].timestamp, weatherLocationTimezone()))}</text><text class="analytics-axis-label" x="${right}" y="230" text-anchor="end">${escapeHtml(formatWeatherTimestamp(points.at(-1)?.timestamp, weatherLocationTimezone()))}</text>`;
+  const marks = renderWeatherLineMarks(coords, title, unitLabel, color, left, bottom);
+  return `<section class="panel analytics-chart-panel weather-chart-panel">${header}
+    <svg class="analytics-plot weather-chart-plot" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(title)} for the next 24 hours">
+      ${grid}<line class="weather-chart-cursor" x1="${left}" y1="${top}" x2="${left}" y2="${bottom}"/>
+      ${marks}
+      ${axisLabels}
+    </svg>
+    <div class="chart-tooltip" aria-hidden="true"></div>
+  </section>`;
+}
+
+function weatherLocationTimezone(): string | undefined {
+  return state.weather?.location.timezone;
+}
+
+function renderWeatherLineMarks(
+  coords: Array<{ timestamp: string; value: number; index: number; x: number; y: number }>,
+  title: string,
+  unit: string,
+  color: "primary" | "info",
+  left: number,
+  bottom: number,
+): string {
+  const segments: typeof coords[] = [];
+  for (const point of coords) {
+    const currentSegment = segments.at(-1);
+    if (!currentSegment || point.index !== currentSegment.at(-1)!.index + 1) segments.push([point]);
+    else currentSegment.push(point);
+  }
+  const linePaths = segments.map((segment) => segment.slice(1).reduce((path, point, index) => {
+    const previous = segment[index];
+    const midpoint = (previous.x + point.x) / 2;
+    return `${path} Q ${midpoint.toFixed(1)} ${previous.y.toFixed(1)} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+  }, `M ${segment[0].x.toFixed(1)} ${segment[0].y.toFixed(1)}`));
+  const linePath = linePaths.join(" ");
+  const areaPath = segments.filter((segment) => segment.length > 1).map((segment) =>
+    `${linePaths[segments.indexOf(segment)]} L ${segment.at(-1)!.x.toFixed(1)} ${bottom} L ${segment[0].x.toFixed(1)} ${bottom} Z`,
+  ).join(" ");
+  const marks = coords.map((point) => {
+    const titleText = formatWeatherTimestamp(point.timestamp, weatherLocationTimezone(), true);
+    return `<circle class="analytics-hit-point analytics-hit-point--${color} weather-chart-mark" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="7" data-weather-x="${point.x.toFixed(1)}" ${chartTip(titleText, [`${title}: ${point.value.toFixed(1)}${unit}`])}/>`;
+  }).join("");
+  return `${areaPath ? `<path class="analytics-area analytics-area--${color}" d="${areaPath}"/>` : ""}<path class="analytics-line analytics-line--${color}" d="${linePath}"/><circle class="analytics-point analytics-point--${color}" cx="${coords.at(-1)?.x ?? left}" cy="${coords.at(-1)?.y ?? bottom}" r="4"/>${marks}`;
+}
+
+function renderWeatherDailyForecast(weather: ApiWeather): string {
+  const dailyTimes = weather.daily.time ?? [];
+  const daily = dailyTimes.map((date, index) => {
+    const code = weatherSeriesValue(weather.daily, "weather_code", index);
+    const high = weatherSeriesValue(weather.daily, "temperature_2m_max", index);
+    const low = weatherSeriesValue(weather.daily, "temperature_2m_min", index);
+    const rain = weatherSeriesValue(weather.daily, "precipitation_sum", index);
+    const chance = weatherSeriesValue(weather.daily, "precipitation_probability_max", index);
+    const wind = weatherSeriesValue(weather.daily, "wind_speed_10m_max", index);
+    const sunrise = weatherSeriesValue(weather.daily, "sunrise", index);
+    const sunset = weatherSeriesValue(weather.daily, "sunset", index);
+    return `<article class="forecast-day-card"><time>${escapeHtml(formatWeatherDate(date))}</time><span>${escapeHtml(weatherCodeDescription(code))}</span><strong>${escapeHtml(formatWeatherValue(high))}<small>${escapeHtml(weather.units.daily.temperature_2m_max ?? "")}</small><span class="forecast-day-card__low">${escapeHtml(formatWeatherValue(low))}${escapeHtml(weather.units.daily.temperature_2m_min ?? "")}</span></strong><dl><div><dt>Precipitation</dt><dd>${escapeHtml(formatWeatherValue(rain))} ${escapeHtml(weather.units.daily.precipitation_sum ?? "")}</dd></div><div><dt>Rain chance</dt><dd>${escapeHtml(formatWeatherValue(chance, 0))}${escapeHtml(weather.units.daily.precipitation_probability_max ?? "")}</dd></div><div><dt>Wind max</dt><dd>${escapeHtml(formatWeatherValue(wind))} ${escapeHtml(weather.units.daily.wind_speed_10m_max ?? "")}</dd></div><div><dt>Sunrise / sunset</dt><dd>${escapeHtml(formatWeatherTimestamp(sunrise, weather.location.timezone))} / ${escapeHtml(formatWeatherTimestamp(sunset, weather.location.timezone))}</dd></div></dl></article>`;
+  }).join("");
+  return `<section class="forecast-section"><div class="panel__header"><div><p class="eyebrow">Next 7 days</p><h2>Daily forecast</h2></div></div><div class="forecast-day-grid">${daily || '<p class="weather-state">Daily forecast data is unavailable.</p>'}</div></section>`;
 }
 
 function renderChart(): string {
@@ -977,7 +1180,7 @@ function renderContent(): string {
     case "Zones": return renderZones();
     case "Irrigation": return renderIrrigation();
     case "Analytics": return renderAnalytics();
-    case "Weather": return renderWeather();
+    case "Weather Forecast": return renderWeather();
     case "Trends": return renderTrends();
     case "Alerts": return renderAlerts();
     case "Settings": return renderSettings();
@@ -1039,11 +1242,38 @@ async function refreshDashboard(): Promise<void> {
   }
 }
 
+async function refreshWeather(): Promise<void> {
+  const requestId = ++state.weatherRequestId;
+  state.weatherLastAttemptAt = Date.now();
+  state.weatherLoading = true;
+  state.weatherError = "";
+  state.weather = null;
+  render();
+  try {
+    if (!state.weatherLocations.length) state.weatherLocations = await getWeatherLocations();
+    const locationId = state.selectedWeatherLocationId || undefined;
+    const weather = await getWeather(locationId);
+    if (requestId !== state.weatherRequestId) return;
+    state.weather = weather;
+    state.selectedWeatherLocationId = weather.location.id;
+  } catch (error) {
+    if (requestId === state.weatherRequestId) state.weatherError = describeError(error);
+  } finally {
+    if (requestId === state.weatherRequestId) {
+      state.weatherLoading = false;
+      render();
+    }
+  }
+}
+
 function startPolling(): void {
   window.clearInterval(state.pollTimer);
   state.pollTimer = window.setInterval(() => {
     if (state.user && state.view !== "Settings" && !state.loading && !state.busy && document.visibilityState === "visible") {
-      void refreshDashboard();
+      if (state.view === "Weather Forecast") {
+        if (Date.now() - state.weatherLastAttemptAt >= 12 * 60_000) void refreshWeather();
+      }
+      else void refreshDashboard();
     }
   }, 30_000);
 }
@@ -1168,20 +1398,40 @@ function hideChartTooltip(mark: HTMLElement): void {
   if (!tooltip) return;
   tooltip.classList.remove("is-visible");
   tooltip.setAttribute("aria-hidden", "true");
+  if (mark.classList.contains("weather-chart-mark")) {
+    const cursor = mark.closest("svg")?.querySelector<SVGLineElement>(".weather-chart-cursor");
+    if (cursor) cursor.style.display = "none";
+  }
+}
+
+function updateWeatherChartCursor(mark: HTMLElement): void {
+  if (!mark.classList.contains("weather-chart-mark")) return;
+  const cursor = mark.closest("svg")?.querySelector<SVGLineElement>(".weather-chart-cursor");
+  const x = mark.dataset.weatherX;
+  if (!cursor || !x) return;
+  cursor.setAttribute("x1", x);
+  cursor.setAttribute("x2", x);
+  cursor.style.display = "block";
 }
 
 document.addEventListener("pointerover", (event: PointerEvent) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
   const mark = target.closest<HTMLElement>("[data-chart-tip]");
-  if (mark) showChartTooltip(mark, event.clientX, event.clientY);
+  if (mark) {
+    updateWeatherChartCursor(mark);
+    showChartTooltip(mark, event.clientX, event.clientY);
+  }
 });
 
 document.addEventListener("pointermove", (event: PointerEvent) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
   const mark = target.closest<HTMLElement>("[data-chart-tip]");
-  if (mark) showChartTooltip(mark, event.clientX, event.clientY);
+  if (mark) {
+    updateWeatherChartCursor(mark);
+    showChartTooltip(mark, event.clientX, event.clientY);
+  }
 });
 
 document.addEventListener("pointerout", (event: PointerEvent) => {
@@ -1197,6 +1447,7 @@ document.addEventListener("focusin", (event: FocusEvent) => {
   if (!(target instanceof HTMLElement)) return;
   const mark = target.closest<HTMLElement>("[data-chart-tip]");
   if (!mark) return;
+  updateWeatherChartCursor(mark);
   const rect = mark.getBoundingClientRect();
   showChartTooltip(mark, rect.left + rect.width / 2, rect.top + rect.height / 2);
 });
@@ -1210,6 +1461,12 @@ document.addEventListener("focusout", (event: FocusEvent) => {
 });
 
 document.addEventListener("keydown", (event: KeyboardEvent) => {
+  if (event.key === "Escape" && state.weatherLocationMenuOpen) {
+    state.weatherLocationMenuOpen = false;
+    render();
+    document.querySelector<HTMLButtonElement>(".weather-location-trigger")?.focus();
+    return;
+  }
   if (event.key === "Escape" && state.languageMenuOpen) {
     state.languageMenuOpen = false;
     render();
@@ -1277,6 +1534,10 @@ document.addEventListener("click", (event: MouseEvent) => {
     state.languageMenuOpen = false;
     render();
   }
+  if (state.weatherLocationMenuOpen && !target.closest(".weather-location-picker")) {
+    state.weatherLocationMenuOpen = false;
+    render();
+  }
   if (!control) return;
 
   switch (control.dataset.action) {
@@ -1285,10 +1546,12 @@ document.addEventListener("click", (event: MouseEvent) => {
       if (nextView && views.includes(nextView as View)) {
         state.view = nextView as View;
         state.zoneMenuOpen = false;
+        state.weatherLocationMenuOpen = false;
         state.mobileNavOpen = false;
         render();
         if (state.view === "Settings" && state.user?.role === "admin") void loadUsers();
-        if (["Analytics", "Weather", "Trends"].includes(state.view)) void refreshDashboard();
+        if (["Analytics", "Trends"].includes(state.view)) void refreshDashboard();
+        if (state.view === "Weather Forecast") void refreshWeather();
       }
       break;
     }
@@ -1301,10 +1564,30 @@ document.addEventListener("click", (event: MouseEvent) => {
     }
     case "toggle-language-menu": {
       state.languageMenuOpen = !state.languageMenuOpen;
+      state.weatherLocationMenuOpen = false;
       state.zoneMenuOpen = false;
       render();
       if (state.languageMenuOpen) {
         document.querySelector<HTMLButtonElement>(".language-option.is-selected")?.focus();
+      }
+      break;
+    }
+    case "toggle-weather-location-menu": {
+      state.weatherLocationMenuOpen = !state.weatherLocationMenuOpen;
+      state.languageMenuOpen = false;
+      state.zoneMenuOpen = false;
+      render();
+      if (state.weatherLocationMenuOpen) {
+        document.querySelector<HTMLButtonElement>(".weather-location-option.is-selected")?.focus();
+      }
+      break;
+    }
+    case "select-weather-location": {
+      const locationId = control.dataset.location;
+      if (locationId && state.weatherLocations.some((location) => location.id === locationId)) {
+        state.selectedWeatherLocationId = locationId;
+        state.weatherLocationMenuOpen = false;
+        void refreshWeather();
       }
       break;
     }
@@ -1406,7 +1689,11 @@ document.addEventListener("click", (event: MouseEvent) => {
       void runApiAction(() => simulateReadings(), "Mock sensor readings updated.");
       break;
     case "refresh":
-      void refreshDashboard();
+      if (state.view === "Weather Forecast") void refreshWeather();
+      else void refreshDashboard();
+      break;
+    case "retry-weather":
+      void refreshWeather();
       break;
     case "logout":
       void (async () => {

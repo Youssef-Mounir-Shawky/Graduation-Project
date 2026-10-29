@@ -9,6 +9,8 @@ import type {
   ApiSession,
   ApiUser,
   ApiValveOverride,
+  ApiWeather,
+  ApiWeatherLocation,
   ApiZone,
 } from "./types.js";
 
@@ -148,6 +150,23 @@ export function getSchedule(): Promise<ApiScheduleEntry[]> {
 export function getReadings(zoneId: string, hours: number, limit = 500): Promise<ApiReadingsResponse> {
   const query = new URLSearchParams({ zone_id: zoneId, hours: String(hours), limit: String(limit) });
   return requestData<ApiReadingsResponse>(`/readings?${query}`);
+}
+
+export function getWeatherLocations(): Promise<ApiWeatherLocation[]> {
+  return requestData<ApiWeatherLocation[]>("/weather/locations");
+}
+
+export function getWeather(location?: string | { latitude: number; longitude: number }): Promise<ApiWeather> {
+  const query = !location
+    ? new URLSearchParams()
+    : typeof location === "string"
+      ? new URLSearchParams({ location })
+      : new URLSearchParams({
+      latitude: String(location.latitude),
+      longitude: String(location.longitude),
+    });
+  const suffix = query.size ? `?${query.toString()}` : "";
+  return requestData<ApiWeather>(`/weather${suffix}`);
 }
 
 export function setManualValve(zoneId: string, state: "on" | "off"): Promise<ApiValveOverride> {
