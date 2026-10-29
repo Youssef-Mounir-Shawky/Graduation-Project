@@ -14,6 +14,8 @@ npm run dev
 
 Open `http://127.0.0.1:5173` in Chrome. Vite serves the UI and proxies `/api` to the Express API on `http://127.0.0.1:3001`. The API runs the repeat-safe schema migration and seed on startup, so `db:setup` is useful for explicitly initializing or repairing a local database but is not required every time.
 
+`GET /api/health` is a readiness check: with PostgreSQL persistence it runs a lightweight `SELECT 1` and returns HTTP 503 when the database cannot be reached; test-mode in-memory persistence reports `database: "in-memory"`.
+
 The server reads its existing `DATABASE_URL` setting at runtime. Keep credentials in the local environment file; do not commit it. The database objects live in the dedicated `nileguard` schema, so the app does not need `CREATE` permission on PostgreSQL's `public` schema.
 
 ## Weather data

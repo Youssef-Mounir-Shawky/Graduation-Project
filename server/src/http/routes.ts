@@ -150,10 +150,41 @@ export function createApiRouter(
   const userAuth = authenticateUser(repository);
   const adminOnly = [userAuth, requireRole("admin")];
 
-  router.get("/health", (_request, response) => {
+  router.get("/health", async (_request, response) => {
+    const persistence = repository instanceof PostgresRepository ? "postgres" : "in-memory";
+    let database: "connected" | "in-memory" | "unavailable" = persistence === "postgres" ? "connected" : "in-memory";
+    if (repository instanceof PostgresRepository) {
+      try {
+        await repository.checkConnection();
+      } catch (error) {
+        const code = error instanceof Error && "code" in error && typeof error.code === "string"
+          ? error.code
+          : "UNKNOWN";
+        console.error(`Database readiness probe failed (${code}).`);
+        database = "unavailable";
+      }
+    }
+    if (database === "unavailable") {
+      response.status(503).json({
+        error: {
+          code: "DATABASE_UNAVAILABLE",
+          message: "The API is running, but PostgreSQL is not currently reachable.",
+        },
+        data: {
+          status: "unavailable",
+          persistence,
+          database,
+          hardware: config.mockHardware ? "mock" : "disabled",
+          mock_hardware: config.mockHardware && config.nodeEnv !== "production",
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
     sendData(response, {
       status: "ok",
-      persistence: repository instanceof PostgresRepository ? "postgres" : "in-memory",
+      persistence,
+      database,
       hardware: config.mockHardware ? "mock" : "disabled",
       mock_hardware: config.mockHardware && config.nodeEnv !== "production",
       timestamp: new Date().toISOString(),

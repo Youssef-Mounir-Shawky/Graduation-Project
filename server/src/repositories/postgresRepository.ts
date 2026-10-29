@@ -120,6 +120,10 @@ const readingSelect = `
 export class PostgresRepository implements NileGuardRepository {
   constructor(private readonly database: Pool) {}
 
+  async checkConnection(): Promise<void> {
+    await this.database.query("SELECT 1");
+  }
+
   async listUsers(): Promise<User[]> {
     const result = await this.database.query("SELECT * FROM nileguard.users ORDER BY created_at, id");
     return result.rows.map(mapUser);

@@ -104,8 +104,9 @@ export interface ApiScheduleEntry {
 }
 
 export interface ApiHealth {
-  status: "ok";
+  status: "ok" | "unavailable";
   persistence: "postgres" | "in-memory";
+  database: "connected" | "in-memory" | "unavailable";
   hardware: "mock" | "disabled";
   mock_hardware: boolean;
   timestamp: string;

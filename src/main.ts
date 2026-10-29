@@ -103,6 +103,8 @@ const state: {
   locale: Locale;
   languageMenuOpen: boolean;
   weatherLocationMenuOpen: boolean;
+  userRoleMenuOpen: boolean;
+  newUserRole: "operator" | "admin";
   sidebarCollapsed: boolean;
   mobileNavOpen: boolean;
   zoneMenuOpen: boolean;
@@ -139,6 +141,8 @@ const state: {
   locale: localStorage.getItem("nileguard.locale") === "ar" ? "ar" : "en",
   languageMenuOpen: false,
   weatherLocationMenuOpen: false,
+  userRoleMenuOpen: false,
+  newUserRole: "operator",
   sidebarCollapsed: localStorage.getItem("nileguard.sidebar-collapsed") === "true",
   mobileNavOpen: false,
   zoneMenuOpen: false,
@@ -396,7 +400,7 @@ function renderSeriesPanel(
   }).join("");
   const latestText = latest === undefined ? "—" : `${latest.toFixed(options.decimals ?? 1)}${unit}`;
   const meanText = average === null ? "—" : `${average.toFixed(options.decimals ?? 1)}${unit}`;
-  const marks = coords.map(({ x, y, point }) => `<circle class="analytics-hit-point analytics-hit-point--${color}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="7" ${chartTip(formatRangePoint(point.timestamp), [`${title}: ${point.value.toFixed(options.decimals ?? 1)}${unit}`])}/>`).join("");
+  const marks = coords.map(({ x, y, point }) => `<circle class="analytics-hit-point analytics-hit-point--${color}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="10" ${chartTip(formatRangePoint(point.timestamp), [`${title}: ${point.value.toFixed(options.decimals ?? 1)}${unit}`])}/>`).join("");
 
   return `<section class="panel analytics-chart-panel">
     <div class="panel__header"><div><p class="eyebrow">${state.range === "24 hours" ? "Hourly average" : "Daily average"} · ${escapeHtml(state.range)}</p><h2>${escapeHtml(title)}</h2></div><div class="analytics-chart-summary"><strong>${escapeHtml(latestText)}</strong><span>latest</span></div></div>
@@ -496,7 +500,7 @@ function renderHistogram(
   }).join("");
   return `<section class="panel analytics-chart-panel">
     <div class="panel__header"><div><p class="eyebrow">${state.range === "24 hours" ? "Hourly averages" : "Daily averages"} · ${escapeHtml(state.range)}</p><h2>${escapeHtml(title)} distribution</h2></div><span class="status status--info">${points.length} periods</span></div>
-    <svg class="analytics-plot" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Histogram of ${escapeHtml(title)} daily averages">${grid}${bars}<text class="analytics-axis-label" x="${left}" y="230">${minimum.toFixed(decimals)}${escapeHtml(unit)}</text><text class="analytics-axis-label" x="${right}" y="230" text-anchor="end">${maximum.toFixed(decimals)}${escapeHtml(unit)}</text></svg>
+    <svg class="analytics-plot" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Histogram of ${escapeHtml(title)} daily averages">${grid}${bars}<text class="analytics-axis-label" x="${left}" y="230">${minimum.toFixed(decimals)}</text><text class="analytics-axis-label" x="${right}" y="230" text-anchor="end">${maximum.toFixed(decimals)}</text></svg>
     <div class="chart-tooltip" aria-hidden="true"></div><div class="analytics-chart-footer"><span>Daily average bins</span><span>Y axis · days</span></div>
   </section>`;
 }
@@ -566,7 +570,7 @@ function renderRelationshipChart(
   }).join("");
   return `<section class="panel analytics-chart-panel">
     <div class="panel__header"><div><p class="eyebrow">Sensor relationship · six months</p><h2>${escapeHtml(config.title)}</h2></div><span class="status status--info">${pairs.length.toLocaleString()} pairs</span></div>
-    <svg class="analytics-plot" viewBox="0 0 ${width} 250" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(config.bubble ? "Bubble chart" : "Scatter plot")} relating ${escapeHtml(config.xLabel)} and ${escapeHtml(config.yLabel)}">${grid}${marks}<text class="analytics-axis-label" x="${left}" y="230">${xMinimum.toFixed(1)}${escapeHtml(config.xUnit)}</text><text class="analytics-axis-label" x="${right}" y="230" text-anchor="end">${xMaximum.toFixed(1)}${escapeHtml(config.xUnit)}</text></svg>
+    <svg class="analytics-plot" viewBox="0 0 ${width} 250" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(config.bubble ? "Bubble chart" : "Scatter plot")} relating ${escapeHtml(config.xLabel)} and ${escapeHtml(config.yLabel)}">${grid}${marks}<text class="analytics-axis-label" x="${left}" y="230">${xMinimum.toFixed(1)}</text><text class="analytics-axis-label" x="${right}" y="230" text-anchor="end">${xMaximum.toFixed(1)}</text></svg>
     <div class="chart-tooltip" aria-hidden="true"></div><p class="analytics-chart-footer">${config.bubble ? `Bubble size represents ${escapeHtml(config.sizeLabel ?? "the third measure")}.` : "Each dot is a paired stored reading."} Hover or focus a mark to inspect both axis values.</p>
   </section>`;
 }
@@ -737,6 +741,26 @@ function renderWeatherError(): string {
   return `<div class="panel weather-state weather-state--error" role="alert"><div><strong>Weather data is unavailable.</strong><p>${escapeHtml(state.weatherError)}</p></div><button class="button button--primary" type="button" data-action="retry-weather">Retry</button></div>`;
 }
 
+function renderUserRolePicker(): string {
+  const options = [
+    { value: "operator", label: "Operator" },
+    { value: "admin", label: "Administrator" },
+  ] as const;
+  const selected = options.find((option) => option.value === state.newUserRole) ?? options[0];
+  return `<div class="user-role-picker">
+    <input type="hidden" name="role" value="${selected.value}" />
+    <button class="user-role-trigger" type="button" data-action="toggle-user-role-menu" aria-haspopup="listbox" aria-expanded="${state.userRoleMenuOpen}" aria-controls="new-user-role-options" aria-label="Role">
+      <span>${selected.label}</span>${icon("chevronDown", "user-role-chevron")}
+    </button>
+    ${state.userRoleMenuOpen ? `<div class="user-role-menu" id="new-user-role-options" role="listbox" aria-label="Choose user role">${options.map((option) => `<button class="user-role-option ${option.value === selected.value ? "is-selected" : ""}" type="button" role="option" aria-selected="${option.value === selected.value}" data-action="select-user-role" data-role="${option.value}">${option.label}</button>`).join("")}</div>` : ""}
+  </div>`;
+}
+
+function updateUserRolePicker(): void {
+  const picker = document.querySelector<HTMLElement>(".user-role-picker");
+  if (picker) picker.innerHTML = renderUserRolePicker();
+}
+
 function weatherSeriesValue(series: ApiWeather["hourly"] | ApiWeather["daily"], key: string, index: number): string | number | null {
   const values = series[key];
   return Array.isArray(values) ? values[index] ?? null : null;
@@ -744,19 +768,17 @@ function weatherSeriesValue(series: ApiWeather["hourly"] | ApiWeather["daily"], 
 
 function renderWeatherHourlyCharts(weather: ApiWeather): string {
   const times = weather.hourly.time ?? [];
-  const temperature = times.map((time, index) => ({
+  const series = (key: string) => times.map((time, index) => ({
     timestamp: time,
-    value: weatherSeriesValue(weather.hourly, "temperature_2m", index),
-  }));
-  const humidity = times.map((time, index) => ({
-    timestamp: time,
-    value: weatherSeriesValue(weather.hourly, "relative_humidity_2m", index),
+    value: weatherSeriesValue(weather.hourly, key, index),
   }));
   return `<section class="forecast-section weather-hourly-section">
     <div class="panel__header"><div><p class="eyebrow">Next 24 hours</p><h2>Hourly forecast</h2></div></div>
     <div class="analytics-chart-grid weather-chart-grid">
-      ${renderWeatherChart("Air temperature", temperature, weather.units.hourly.temperature_2m ?? "", "primary", "max")}
-      ${renderWeatherChart("Humidity", humidity, weather.units.hourly.relative_humidity_2m ?? "%", "info", "average")}
+      ${renderWeatherChart("Air temperature", series("temperature_2m"), weather.units.hourly.temperature_2m ?? "", "primary", "max")}
+      ${renderWeatherChart("Humidity", series("relative_humidity_2m"), weather.units.hourly.relative_humidity_2m ?? "%", "info", "average")}
+      ${renderWeatherChart("Light intensity · solar radiation", series("shortwave_radiation"), weather.units.hourly.shortwave_radiation ?? "W/m²", "info", "average")}
+      ${renderWeatherChart("Air pressure", series("pressure_msl"), weather.units.hourly.pressure_msl ?? "hPa", "primary", "average")}
     </div>
   </section>`;
 }
@@ -808,7 +830,7 @@ function renderWeatherChart(
   const grid = Array.from({ length: 4 }, (_, index) => {
     const value = maximum - ((maximum - minimum) * index) / 3;
     const y = top + ((bottom - top) * index) / 3;
-    return `<line class="analytics-gridline" x1="${left}" y1="${y}" x2="${right}" y2="${y}"/><text class="analytics-axis-label" x="${left - 8}" y="${y + 4}" text-anchor="end">${value.toFixed(1)}${escapeHtml(unitLabel)}</text>`;
+    return `<line class="analytics-gridline" x1="${left}" y1="${y}" x2="${right}" y2="${y}"/><text class="analytics-axis-label" x="${left - 8}" y="${y + 4}" text-anchor="end">${value.toFixed(1)}</text>`;
   }).join("");
   const axisLabels = `<text class="analytics-axis-label" x="${left}" y="230">${escapeHtml(formatWeatherTimestamp(points[0].timestamp, weatherLocationTimezone()))}</text><text class="analytics-axis-label" x="${right}" y="230" text-anchor="end">${escapeHtml(formatWeatherTimestamp(points.at(-1)?.timestamp, weatherLocationTimezone()))}</text>`;
   const marks = renderWeatherLineMarks(coords, title, unitLabel, color, left, bottom);
@@ -851,7 +873,7 @@ function renderWeatherLineMarks(
   ).join(" ");
   const marks = coords.map((point) => {
     const titleText = formatWeatherTimestamp(point.timestamp, weatherLocationTimezone(), true);
-    return `<circle class="analytics-hit-point analytics-hit-point--${color} weather-chart-mark" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="7" data-weather-x="${point.x.toFixed(1)}" ${chartTip(titleText, [`${title}: ${point.value.toFixed(1)}${unit}`])}/>`;
+    return `<circle class="analytics-hit-point analytics-hit-point--${color} weather-chart-mark" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="12" tabindex="0" role="img" aria-label="${escapeHtml(`${titleText}, ${title}: ${point.value.toFixed(1)}${unit}`)}" data-weather-x="${point.x.toFixed(1)}" ${chartTip(titleText, [`${title}: ${point.value.toFixed(1)}${unit}`])}/>`;
   }).join("");
   return `${areaPath ? `<path class="analytics-area analytics-area--${color}" d="${areaPath}"/>` : ""}<path class="analytics-line analytics-line--${color}" d="${linePath}"/><circle class="analytics-point analytics-point--${color}" cx="${coords.at(-1)?.x ?? left}" cy="${coords.at(-1)?.y ?? bottom}" r="4"/>${marks}`;
 }
@@ -901,7 +923,7 @@ function renderChart(): string {
   }).join("");
   const grid = [0, 25, 50, 75, 100].map((value) => {
     const y = bottom - (value / 100) * (bottom - top);
-    return `<line class="analytics-gridline" x1="${left}" y1="${y}" x2="${right}" y2="${y}"/><text class="analytics-axis-label" x="${left - 10}" y="${y + 4}" text-anchor="end">${value}%</text>`;
+    return `<line class="analytics-gridline" x1="${left}" y1="${y}" x2="${right}" y2="${y}"/><text class="analytics-axis-label" x="${left - 10}" y="${y + 4}" text-anchor="end">${value}</text>`;
   }).join("");
 
   return `<div class="chart-frame moisture-chart">
@@ -1102,10 +1124,10 @@ function renderSettings(): string {
       <label class="field"><span class="field__label">Email</span><input class="input" type="email" name="email" required maxlength="254" /></label>
       <label class="field"><span class="field__label">Phone number</span><input class="input" type="tel" name="phone_number" required maxlength="32" /></label>
       <label class="field"><span class="field__label">Initial password</span><input class="input" type="password" name="password" required minlength="12" maxlength="128" autocomplete="new-password" /></label>
-      <label class="field"><span class="field__label">Role</span><select class="select" name="role"><option value="operator">Operator</option><option value="admin">Administrator</option></select></label>
+      <label class="field"><span class="field__label">Role</span>${renderUserRolePicker()}</label>
       <button class="button button--primary" type="submit" ${state.busy ? "disabled" : ""}>Add user</button>
     </form>
-    <div class="user-list">${(state.usersExpanded ? state.users : state.users.slice(0, 5)).map((user) => `<article class="user-row"><div><strong>${escapeHtml(user.name)}</strong><span>${escapeHtml(user.email)} · ${escapeHtml(user.phoneNumber)}</span></div><span class="status status--info">${escapeHtml(user.role)}</span><div class="cluster">${user.id === state.user?.id ? '<span class="settings-note">You</span>' : `<button type="button" class="button button--quiet button--small" data-action="delete-user" data-user="${escapeHtml(user.id)}" aria-label="Delete ${escapeHtml(user.name)}" ${state.busy ? "disabled" : ""}>Delete</button>`}</div></article>`).join("") || '<p class="empty-copy">No users were found.</p>'}${state.users.length > 5 && !state.usersExpanded ? '<button type="button" class="button button--secondary button--small user-list__load-more" data-action="load-more-users">Load More</button>' : ""}</div>
+    <div class="user-list">${(state.usersExpanded ? state.users : state.users.slice(0, 5)).map((user) => `<article class="user-row"><div><strong>${escapeHtml(user.name)}</strong><span>${escapeHtml(user.email)} · ${escapeHtml(user.phoneNumber)}</span></div><span class="status status--info">${escapeHtml(user.role)}</span><div class="cluster">${user.id === state.user?.id ? '<span class="settings-note">You</span>' : `<button type="button" class="button button--quiet button--small" data-action="delete-user" data-user="${escapeHtml(user.id)}" aria-label="Delete ${escapeHtml(user.name)}" ${state.busy ? "disabled" : ""}>Delete</button>`}</div></article>`).join("") || '<p class="empty-copy">No users were found.</p>'}${state.users.length > 5 ? `<div class="user-list__controls">${state.usersExpanded ? '<button type="button" class="button button--secondary button--small" data-action="show-less-users">Show less</button>' : '<button type="button" class="button button--secondary button--small" data-action="load-more-users">Show more</button>'}</div>` : ""}</div>
     <p class="settings-note">Users manage their own names, email addresses, phone numbers, and passwords in account settings. Administrators can add or delete accounts, but cannot edit another user's profile.</p>
   </section>` : "";
   return `<div class="dashboard-heading"><div><p class="eyebrow">Signed in securely</p><h1>Account & system</h1><p class="page-intro">Update your own account details and check backend status.</p></div><button type="button" class="button button--secondary" data-action="logout">${icon("logout")} Sign out</button></div>
@@ -1202,6 +1224,16 @@ function describeError(error: unknown): string {
   return "An unexpected error occurred while communicating with the API.";
 }
 
+async function getReadyHealth(): Promise<ApiHealth> {
+  try {
+    return await getHealth();
+  } catch (error) {
+    if (!(error instanceof ApiError) || (error.status < 500 && error.status !== 0)) throw error;
+    await new Promise((resolve) => window.setTimeout(resolve, 750));
+    return getHealth();
+  }
+}
+
 async function fetchDashboardData(): Promise<void> {
   const requestId = ++nextDashboardRequest;
   const [zones, recommendations, alerts, schedule] = await Promise.all([
@@ -1269,11 +1301,13 @@ async function refreshWeather(): Promise<void> {
 function startPolling(): void {
   window.clearInterval(state.pollTimer);
   state.pollTimer = window.setInterval(() => {
-    if (state.user && state.view !== "Settings" && !state.loading && !state.busy && document.visibilityState === "visible") {
+    const refreshableViews: View[] = ["Zones", "Irrigation", "Alerts"];
+    if (state.user && !state.loading && !state.busy && document.visibilityState === "visible") {
       if (state.view === "Weather Forecast") {
         if (Date.now() - state.weatherLastAttemptAt >= 12 * 60_000) void refreshWeather();
+      } else if (refreshableViews.includes(state.view)) {
+        void refreshDashboard();
       }
-      else void refreshDashboard();
     }
   }, 30_000);
 }
@@ -1376,7 +1410,7 @@ function clearUserSession(message: string): void {
   render();
 }
 
-function showChartTooltip(mark: HTMLElement, clientX: number, clientY: number): void {
+function showChartTooltip(mark: SVGElement, clientX: number, clientY: number): void {
   const panel = mark.closest<HTMLElement>(".analytics-chart-panel, .trend-panel");
   const tooltip = panel?.querySelector<HTMLDivElement>(".chart-tooltip");
   const text = mark.dataset.chartTip;
@@ -1392,7 +1426,7 @@ function showChartTooltip(mark: HTMLElement, clientX: number, clientY: number): 
   tooltip.style.top = `${top}px`;
 }
 
-function hideChartTooltip(mark: HTMLElement): void {
+function hideChartTooltip(mark: SVGElement): void {
   const panel = mark.closest<HTMLElement>(".analytics-chart-panel, .trend-panel");
   const tooltip = panel?.querySelector<HTMLDivElement>(".chart-tooltip");
   if (!tooltip) return;
@@ -1404,20 +1438,43 @@ function hideChartTooltip(mark: HTMLElement): void {
   }
 }
 
-function updateWeatherChartCursor(mark: HTMLElement): void {
+function updateWeatherChartCursor(mark: SVGElement): void {
   if (!mark.classList.contains("weather-chart-mark")) return;
   const cursor = mark.closest("svg")?.querySelector<SVGLineElement>(".weather-chart-cursor");
-  const x = mark.dataset.weatherX;
+  const x = mark.getAttribute("data-weather-x");
   if (!cursor || !x) return;
   cursor.setAttribute("x1", x);
   cursor.setAttribute("x2", x);
   cursor.style.display = "block";
 }
 
+function nearestChartMark(svg: SVGSVGElement, clientX: number, clientY: number): SVGElement | null {
+  const marks = Array.from(svg.querySelectorAll<SVGElement>("[data-chart-tip]"));
+  let nearest: SVGElement | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const mark of marks) {
+    const rect = mark.getBoundingClientRect();
+    const distance = Math.hypot(rect.left + rect.width / 2 - clientX, rect.top + rect.height / 2 - clientY);
+    if (distance < nearestDistance) {
+      nearest = mark;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function hideChartPanelTooltip(panel: HTMLElement, svg?: SVGSVGElement): void {
+  const tooltip = panel.querySelector<HTMLDivElement>(".chart-tooltip");
+  tooltip?.classList.remove("is-visible");
+  tooltip?.setAttribute("aria-hidden", "true");
+  svg?.querySelector<SVGLineElement>(".weather-chart-cursor")?.style.setProperty("display", "none");
+  svg?.querySelector<HTMLElement>(".is-active[data-chart-tip]")?.classList.remove("is-active");
+}
+
 document.addEventListener("pointerover", (event: PointerEvent) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  const mark = target.closest<HTMLElement>("[data-chart-tip]");
+  const mark = target.closest<SVGElement>("[data-chart-tip]");
   if (mark) {
     updateWeatherChartCursor(mark);
     showChartTooltip(mark, event.clientX, event.clientY);
@@ -1427,7 +1484,24 @@ document.addEventListener("pointerover", (event: PointerEvent) => {
 document.addEventListener("pointermove", (event: PointerEvent) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  const mark = target.closest<HTMLElement>("[data-chart-tip]");
+  const svg = target.closest<SVGSVGElement>(".analytics-plot");
+  if (svg) {
+    const mark = nearestChartMark(svg, event.clientX, event.clientY);
+    const previousMark = svg.querySelector<SVGElement>(".is-active[data-chart-tip]");
+    if (previousMark !== mark) {
+      previousMark?.classList.remove("is-active");
+      mark?.classList.add("is-active");
+    }
+    if (mark) {
+      updateWeatherChartCursor(mark);
+      showChartTooltip(mark, event.clientX, event.clientY);
+    } else {
+      const panel = svg.closest<HTMLElement>(".analytics-chart-panel, .trend-panel");
+      if (panel) hideChartPanelTooltip(panel, svg);
+    }
+    return;
+  }
+  const mark = target.closest<SVGElement>("[data-chart-tip]");
   if (mark) {
     updateWeatherChartCursor(mark);
     showChartTooltip(mark, event.clientX, event.clientY);
@@ -1437,16 +1511,24 @@ document.addEventListener("pointermove", (event: PointerEvent) => {
 document.addEventListener("pointerout", (event: PointerEvent) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  const mark = target.closest<HTMLElement>("[data-chart-tip]");
+  const mark = target.closest<SVGElement>("[data-chart-tip]");
+  const svg = target.closest<SVGSVGElement>(".analytics-plot");
   const nextTarget = event.relatedTarget;
-  if (mark && (!(nextTarget instanceof Element) || !nextTarget.closest("[data-chart-tip]"))) hideChartTooltip(mark);
+  if (svg && (!(nextTarget instanceof Node) || !svg.contains(nextTarget))) {
+    const panel = svg.closest<HTMLElement>(".analytics-chart-panel, .trend-panel");
+    if (panel) hideChartPanelTooltip(panel, svg);
+  } else if (mark && (!(nextTarget instanceof Element) || !nextTarget.closest("[data-chart-tip]"))) {
+    if (svg && nextTarget instanceof Node && svg.contains(nextTarget)) return;
+    hideChartTooltip(mark);
+  }
 });
 
 document.addEventListener("focusin", (event: FocusEvent) => {
   const target = event.target;
-  if (!(target instanceof HTMLElement)) return;
-  const mark = target.closest<HTMLElement>("[data-chart-tip]");
+  if (!(target instanceof Element)) return;
+  const mark = target.closest<SVGElement>("[data-chart-tip]");
   if (!mark) return;
+  mark.classList.add("is-active");
   updateWeatherChartCursor(mark);
   const rect = mark.getBoundingClientRect();
   showChartTooltip(mark, rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -1454,9 +1536,10 @@ document.addEventListener("focusin", (event: FocusEvent) => {
 
 document.addEventListener("focusout", (event: FocusEvent) => {
   const target = event.target;
-  if (!(target instanceof HTMLElement)) return;
-  const mark = target.closest<HTMLElement>("[data-chart-tip]");
+  if (!(target instanceof Element)) return;
+  const mark = target.closest<SVGElement>("[data-chart-tip]");
   const nextTarget = event.relatedTarget;
+  mark?.classList.remove("is-active");
   if (mark && (!(nextTarget instanceof Element) || !nextTarget.closest("[data-chart-tip]"))) hideChartTooltip(mark);
 });
 
@@ -1465,6 +1548,12 @@ document.addEventListener("keydown", (event: KeyboardEvent) => {
     state.weatherLocationMenuOpen = false;
     render();
     document.querySelector<HTMLButtonElement>(".weather-location-trigger")?.focus();
+    return;
+  }
+  if (event.key === "Escape" && state.userRoleMenuOpen) {
+    state.userRoleMenuOpen = false;
+    updateUserRolePicker();
+    document.querySelector<HTMLButtonElement>(".user-role-trigger")?.focus();
     return;
   }
   if (event.key === "Escape" && state.languageMenuOpen) {
@@ -1538,6 +1627,10 @@ document.addEventListener("click", (event: MouseEvent) => {
     state.weatherLocationMenuOpen = false;
     render();
   }
+  if (state.userRoleMenuOpen && !target.closest(".user-role-picker")) {
+    state.userRoleMenuOpen = false;
+    updateUserRolePicker();
+  }
   if (!control) return;
 
   switch (control.dataset.action) {
@@ -1547,6 +1640,7 @@ document.addEventListener("click", (event: MouseEvent) => {
         state.view = nextView as View;
         state.zoneMenuOpen = false;
         state.weatherLocationMenuOpen = false;
+        state.userRoleMenuOpen = false;
         state.mobileNavOpen = false;
         render();
         if (state.view === "Settings" && state.user?.role === "admin") void loadUsers();
@@ -1565,6 +1659,7 @@ document.addEventListener("click", (event: MouseEvent) => {
     case "toggle-language-menu": {
       state.languageMenuOpen = !state.languageMenuOpen;
       state.weatherLocationMenuOpen = false;
+      state.userRoleMenuOpen = false;
       state.zoneMenuOpen = false;
       render();
       if (state.languageMenuOpen) {
@@ -1575,10 +1670,40 @@ document.addEventListener("click", (event: MouseEvent) => {
     case "toggle-weather-location-menu": {
       state.weatherLocationMenuOpen = !state.weatherLocationMenuOpen;
       state.languageMenuOpen = false;
+      state.userRoleMenuOpen = false;
       state.zoneMenuOpen = false;
       render();
       if (state.weatherLocationMenuOpen) {
         document.querySelector<HTMLButtonElement>(".weather-location-option.is-selected")?.focus();
+      }
+      break;
+    }
+    case "toggle-user-role-menu": {
+      state.userRoleMenuOpen = !state.userRoleMenuOpen;
+      state.weatherLocationMenuOpen = false;
+      state.languageMenuOpen = false;
+      state.zoneMenuOpen = false;
+      for (const [menuSelector, triggerSelector] of [
+        [".language-menu", ".language-trigger"],
+        [".weather-location-menu", ".weather-location-trigger"],
+        [".zone-picker__menu", ".zone-picker__trigger"],
+      ]) {
+        document.querySelector(menuSelector)?.remove();
+        document.querySelector<HTMLButtonElement>(triggerSelector)?.setAttribute("aria-expanded", "false");
+      }
+      updateUserRolePicker();
+      if (state.userRoleMenuOpen) {
+        document.querySelector<HTMLButtonElement>(".user-role-option.is-selected")?.focus();
+      }
+      break;
+    }
+    case "select-user-role": {
+      const role = control.dataset.role;
+      if (role === "operator" || role === "admin") {
+        state.newUserRole = role;
+        state.userRoleMenuOpen = false;
+        updateUserRolePicker();
+        document.querySelector<HTMLButtonElement>(".user-role-trigger")?.focus();
       }
       break;
     }
@@ -1604,6 +1729,11 @@ document.addEventListener("click", (event: MouseEvent) => {
     }
     case "load-more-users": {
       state.usersExpanded = true;
+      render();
+      break;
+    }
+    case "show-less-users": {
+      state.usersExpanded = false;
       render();
       break;
     }
@@ -1721,7 +1851,7 @@ mobileNavigationQuery.addEventListener("change", () => {
 
 async function initialize(): Promise<void> {
   try {
-    const health = await getHealth();
+    const health = await getReadyHealth();
     state.mockHardwareEnabled = health.mock_hardware;
     state.persistence = health.persistence;
     if (getSessionToken()) {

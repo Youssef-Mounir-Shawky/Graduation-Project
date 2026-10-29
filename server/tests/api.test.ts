@@ -34,6 +34,14 @@ describe("NileGuard repository-backed API", () => {
     assert.equal(issuedGateway.body.data.token_type, "nileguard-gateway");
   });
 
+  it("reports API and database readiness", async () => {
+    const health = await request(app).get("/api/health");
+    assert.equal(health.status, 200);
+    assert.equal(health.body.data.status, "ok");
+    assert.equal(health.body.data.persistence, "in-memory");
+    assert.equal(health.body.data.database, "in-memory");
+  });
+
   it("requires a login and returns only safe user fields", async () => {
     const unauthorized = await request(app).get("/api/zones");
     assert.equal(unauthorized.status, 401);

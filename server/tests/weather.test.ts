@@ -31,11 +31,19 @@ function forecastResponse(latitude: number, longitude: number): Record<string, u
     timezone: "Africa/Cairo",
     current_units: { time: "iso8601", temperature_2m: "°C", relative_humidity_2m: "%" },
     current: { time: "2026-10-29T15:00", temperature_2m: 27.3, relative_humidity_2m: null },
-    hourly_units: { time: "iso8601", temperature_2m: "°C", precipitation: "mm" },
+    hourly_units: {
+      time: "iso8601",
+      temperature_2m: "°C",
+      precipitation: "mm",
+      pressure_msl: "hPa",
+      shortwave_radiation: "W/m²",
+    },
     hourly: {
       time: times,
       temperature_2m: times.map((_time, index) => index === 1 ? null : 20 + index),
       precipitation: times.map(() => 0),
+      pressure_msl: times.map((_time, index) => 1010 + index),
+      shortwave_radiation: times.map((_time, index) => index * 10),
     },
     daily_units: { time: "iso8601", temperature_2m_max: "°C" },
     daily: {
@@ -91,6 +99,11 @@ describe("Open-Meteo weather service", () => {
     assert.equal(nasrWeather.current.relative_humidity_2m, null);
     assert.equal(nasrWeather.hourly.time?.length, 24);
     assert.equal(nasrWeather.hourly.temperature_2m?.[1], null);
+    assert.equal(nasrWeather.hourly.pressure_msl?.[4], 1014);
+    assert.equal(nasrWeather.hourly.shortwave_radiation?.[4], 40);
+    const forecastRequest = new URL(calls.find((url) => url.includes("/v1/forecast"))!);
+    assert.match(forecastRequest.searchParams.get("hourly") ?? "", /pressure_msl/);
+    assert.match(forecastRequest.searchParams.get("hourly") ?? "", /shortwave_radiation/);
     assert.equal(nasrWeather.daily.time?.length, 7);
     assert.deepEqual(nasrWeather.units.current, {
       time: "iso8601",
