@@ -5,58 +5,27 @@ const weatherVariables = {
     "temperature_2m",
     "relative_humidity_2m",
     "apparent_temperature",
-    "is_day",
-    "precipitation",
-    "rain",
-    "showers",
-    "snowfall",
     "weather_code",
     "cloud_cover",
     "pressure_msl",
-    "surface_pressure",
     "wind_speed_10m",
     "wind_direction_10m",
-    "wind_gusts_10m",
   ],
   hourly: [
     "temperature_2m",
     "relative_humidity_2m",
-    "dew_point_2m",
-    "apparent_temperature",
-    "precipitation_probability",
-    "precipitation",
     "pressure_msl",
-    "rain",
-    "showers",
-    "snowfall",
     "shortwave_radiation",
-    "weather_code",
-    "cloud_cover",
-    "visibility",
-    "wind_speed_10m",
-    "wind_direction_10m",
-    "wind_gusts_10m",
   ],
   daily: [
     "weather_code",
     "temperature_2m_max",
     "temperature_2m_min",
-    "apparent_temperature_max",
-    "apparent_temperature_min",
     "sunrise",
     "sunset",
-    "daylight_duration",
-    "sunshine_duration",
-    "uv_index_max",
     "precipitation_sum",
-    "rain_sum",
-    "showers_sum",
-    "snowfall_sum",
-    "precipitation_hours",
     "precipitation_probability_max",
     "wind_speed_10m_max",
-    "wind_gusts_10m_max",
-    "wind_direction_10m_dominant",
   ],
 } as const;
 
@@ -67,6 +36,8 @@ const presets = [
 ] as const;
 
 const weatherCacheTtlMs = config.weatherCacheTtlMs;
+const staleWeatherCacheTtlMs = 24 * 60 * 60 * 1000;
+const defaultRateLimitCooldownMs = 60 * 1000;
 const geocodingCacheTtlMs = 24 * 60 * 60 * 1000;
 const maximumCacheEntries = 200;
 
@@ -88,6 +59,7 @@ export interface OpenMeteoWeather {
   source: "open-meteo";
   attribution: "Weather data by Open-Meteo.com";
   retrieved_at: string;
+  stale?: boolean;
   location: WeatherLocation;
   units: {
     current: Record<string, string>;
@@ -185,12 +157,21 @@ function providerError(response: Response, provider: string): WeatherServiceErro
 }
 
 export class OpenMeteoWeatherService implements WeatherService {
-  private readonly weatherCache = new Map<string, { expiresAt: number; value: OpenMeteoWeather }>();
+  private readonly weatherCache = new Map<string, { expiresAt: number; staleUntil: number; value: OpenMeteoWeather }>();
   private readonly geocodingCache = new Map<string, { expiresAt: number; value: GeocodingResult }>();
+  private readonly weatherRequests = new Map<string, Promise<OpenMeteoWeather>>();
+  private readonly geocodingRequests = new Map<string, Promise<GeocodingResult>>();
+  private providerRetryAt = 0;
 
   constructor(
     private readonly fetcher: typeof fetch = fetch,
     private readonly requestTimeoutMs = config.weatherRequestTimeoutMs,
+    private readonly cacheTtlMs = weatherCacheTtlMs,
+    private readonly staleCacheTtlMs = staleWeatherCacheTtlMs,
+    private readonly proxy: { url: string; token: string } = {
+      url: config.weatherProxyUrl,
+      token: config.weatherProxyToken,
+    },
   ) {}
 
   async listLocations(): Promise<Array<WeatherLocation & { preset: boolean }>> {
@@ -219,8 +200,26 @@ export class OpenMeteoWeatherService implements WeatherService {
       forecastHours: 24,
       timezone: "auto",
     });
-    const cached = cacheGet(this.weatherCache, cacheKey);
-    if (cached) return cached;
+    const now = Date.now();
+    const cached = this.weatherCache.get(cacheKey);
+    if (cached && cached.staleUntil <= now) {
+      this.weatherCache.delete(cacheKey);
+    } else if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+    const usableCached = cached && cached.staleUntil > now ? cached : undefined;
+
+    if (this.providerRetryAt > now) {
+      if (usableCached) return { ...usableCached.value, stale: true };
+      throw new WeatherServiceError(
+        503,
+        "WEATHER_PROVIDER_RATE_LIMITED",
+        "Open-Meteo forecast API is rate-limiting requests. Retry later.",
+        Math.ceil((this.providerRetryAt - now) / 1000),
+      );
+    }
+    const inFlight = this.weatherRequests.get(cacheKey);
+    if (inFlight) return inFlight;
 
     const parameters = new URLSearchParams({
       latitude: String(location.latitude),
@@ -232,13 +231,40 @@ export class OpenMeteoWeatherService implements WeatherService {
       forecast_hours: "24",
       timezone: "auto",
     });
-    const payload = await this.requestJson(
-      `https://api.open-meteo.com/v1/forecast?${parameters.toString()}`,
-      "Open-Meteo forecast API",
-    );
-    const weather = this.parseWeather(payload, location);
-    cacheSet(this.weatherCache, cacheKey, weather, weatherCacheTtlMs);
-    return weather;
+    const request = (async (): Promise<OpenMeteoWeather> => {
+      try {
+        const payload = await this.requestJson(
+          this.providerUrl("forecast", "/v1/forecast", parameters),
+          "Open-Meteo forecast API",
+        );
+        const weather = this.parseWeather(payload, location);
+        const fetchedAt = Date.now();
+        if (this.weatherCache.size >= maximumCacheEntries && !this.weatherCache.has(cacheKey)) {
+          const oldestKey = this.weatherCache.keys().next().value as string | undefined;
+          if (oldestKey) this.weatherCache.delete(oldestKey);
+        }
+        this.weatherCache.set(cacheKey, {
+          value: weather,
+          expiresAt: fetchedAt + this.cacheTtlMs,
+          staleUntil: fetchedAt + this.staleCacheTtlMs,
+        });
+        this.providerRetryAt = 0;
+        return weather;
+      } catch (error) {
+        if (error instanceof WeatherServiceError && error.code === "WEATHER_PROVIDER_RATE_LIMITED") {
+          const retryAfterSeconds = error.retryAfterSeconds ?? Math.ceil(defaultRateLimitCooldownMs / 1000);
+          this.providerRetryAt = Date.now() + retryAfterSeconds * 1000;
+          if (usableCached && usableCached.staleUntil > Date.now()) return { ...usableCached.value, stale: true };
+        }
+        throw error;
+      }
+    })();
+    this.weatherRequests.set(cacheKey, request);
+    try {
+      return await request;
+    } finally {
+      if (this.weatherRequests.get(cacheKey) === request) this.weatherRequests.delete(cacheKey);
+    }
   }
 
   private async resolvePreset(locationId: string): Promise<WeatherLocation> {
@@ -248,8 +274,20 @@ export class OpenMeteoWeatherService implements WeatherService {
     }
 
     const cached = cacheGet(this.geocodingCache, preset.id);
-    const result = cached ?? await this.resolveGeocoding(preset);
-    if (!cached) cacheSet(this.geocodingCache, preset.id, result, geocodingCacheTtlMs);
+    let result = cached;
+    if (!result) {
+      let request = this.geocodingRequests.get(preset.id);
+      if (!request) {
+        request = this.resolveGeocoding(preset);
+        this.geocodingRequests.set(preset.id, request);
+      }
+      try {
+        result = await request;
+        if (!cached) cacheSet(this.geocodingCache, preset.id, result, geocodingCacheTtlMs);
+      } finally {
+        if (this.geocodingRequests.get(preset.id) === request) this.geocodingRequests.delete(preset.id);
+      }
+    }
     return {
       id: preset.id,
       name: preset.name,
@@ -268,7 +306,7 @@ export class OpenMeteoWeatherService implements WeatherService {
       format: "json",
     });
     const payload = await this.requestJson(
-      `https://geocoding-api.open-meteo.com/v1/search?${parameters.toString()}`,
+      this.providerUrl("geocoding", "/v1/search", parameters),
       "Open-Meteo geocoding API",
     );
     const results = isRecord(payload) && Array.isArray(payload.results) ? payload.results : [];
@@ -300,10 +338,21 @@ export class OpenMeteoWeatherService implements WeatherService {
     };
   }
 
+  private providerUrl(proxyRoute: "forecast" | "geocoding", directPath: string, parameters: URLSearchParams): string {
+    if (this.proxy.url) {
+      return `${this.proxy.url}/${proxyRoute}?${parameters.toString()}`;
+    }
+    const host = proxyRoute === "forecast" ? "api.open-meteo.com" : "geocoding-api.open-meteo.com";
+    return `https://${host}${directPath}?${parameters.toString()}`;
+  }
+
   private async requestJson(url: string, provider: string): Promise<unknown> {
     let response: Response;
     try {
-      response = await this.fetcher(url, { signal: AbortSignal.timeout(this.requestTimeoutMs) });
+      response = await this.fetcher(url, {
+        signal: AbortSignal.timeout(this.requestTimeoutMs),
+        ...(this.proxy.url ? { headers: { Authorization: `Bearer ${this.proxy.token}` } } : {}),
+      });
     } catch (error) {
       if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
         throw new WeatherServiceError(504, "WEATHER_PROVIDER_TIMEOUT", `${provider} did not respond before the timeout.`);

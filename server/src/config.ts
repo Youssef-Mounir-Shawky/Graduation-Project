@@ -24,8 +24,10 @@ export const config = {
   demoAdminEmail: process.env.DEMO_ADMIN_EMAIL ?? "farmer@nileguard.local",
   demoAdminPassword: process.env.DEMO_ADMIN_PASSWORD ?? "NileGuard2026!",
   weatherDefaultLocation: process.env.WEATHER_DEFAULT_LOCATION ?? "nasr-city",
-  weatherCacheTtlMs: Number(process.env.WEATHER_CACHE_TTL_MS ?? 12 * 60 * 1000),
+  weatherCacheTtlMs: Number(process.env.WEATHER_CACHE_TTL_MS ?? 15 * 60 * 1000),
   weatherRequestTimeoutMs: Number(process.env.WEATHER_REQUEST_TIMEOUT_MS ?? 10_000),
+  weatherProxyUrl: process.env.WEATHER_PROXY_URL?.replace(/\/+$/, "") ?? "",
+  weatherProxyToken: process.env.WEATHER_PROXY_TOKEN ?? "",
 };
 
 if (config.nodeEnv === "production"
@@ -51,4 +53,25 @@ if (!Number.isInteger(config.weatherCacheTtlMs) || config.weatherCacheTtlMs < 60
 
 if (!Number.isInteger(config.weatherRequestTimeoutMs) || config.weatherRequestTimeoutMs < 1000 || config.weatherRequestTimeoutMs > 60_000) {
   throw new Error("WEATHER_REQUEST_TIMEOUT_MS must be between 1000 and 60000.");
+}
+
+if (Boolean(config.weatherProxyUrl) !== Boolean(config.weatherProxyToken)) {
+  throw new Error("WEATHER_PROXY_URL and WEATHER_PROXY_TOKEN must be configured together.");
+}
+
+if (config.weatherProxyUrl) {
+  let weatherProxyUrl: URL;
+  try {
+    weatherProxyUrl = new URL(config.weatherProxyUrl);
+  } catch {
+    throw new Error("WEATHER_PROXY_URL must be a valid HTTPS origin.");
+  }
+  if (weatherProxyUrl.protocol !== "https:"
+    || weatherProxyUrl.pathname !== "/"
+    || weatherProxyUrl.search
+    || weatherProxyUrl.hash
+    || weatherProxyUrl.username
+    || weatherProxyUrl.password) {
+    throw new Error("WEATHER_PROXY_URL must be an HTTPS origin without a path, query, or credentials.");
+  }
 }

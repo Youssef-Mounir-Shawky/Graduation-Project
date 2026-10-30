@@ -133,6 +133,7 @@ export interface ApiWeather {
   source: "open-meteo";
   attribution: string;
   retrieved_at: string;
+  stale?: boolean;
   location: ApiWeatherLocation;
   units: {
     current: Record<string, string>;
