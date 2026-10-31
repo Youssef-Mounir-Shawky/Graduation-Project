@@ -133,6 +133,114 @@ describe("Open-Meteo weather service", () => {
     assert.equal(weather.location.longitude, 29.9);
   });
 
+  it("routes forecast and geocoding through the configured authenticated proxy", async () => {
+    const calls: Array<{ url: URL; authorization: string | null }> = [];
+    const service = new OpenMeteoWeatherService(async (input, init) => {
+      const url = new URL(String(input));
+      calls.push({
+        url,
+        authorization: new Headers(init?.headers).get("Authorization"),
+      });
+      if (url.pathname === "/geocoding") {
+        const result = presetGeocoding[url.searchParams.get("name") ?? ""];
+        return response({
+          results: result ? [{
+            ...result,
+            country_code: "EG",
+            admin1: "Cairo Governorate",
+            timezone: "Africa/Cairo",
+            elevation: 70,
+          }] : [],
+        });
+      }
+      return response(forecastResponse(
+        Number(url.searchParams.get("latitude")),
+        Number(url.searchParams.get("longitude")),
+      ));
+    }, 1000, 60_000, 60_000, {
+      url: "https://nileguard-weather.example.workers.dev",
+      token: "unit-test-proxy-secret",
+    });
+
+    await service.listLocations();
+    const weather = await service.getWeather("nasr-city");
+    assert.equal(weather.location.id, "nasr-city");
+    assert.equal(calls.filter(({ url }) => url.pathname === "/geocoding").length, 3);
+    assert.equal(calls.filter(({ url }) => url.pathname === "/forecast").length, 1);
+    assert.ok(calls.every(({ url }) => url.hostname === "nileguard-weather.example.workers.dev"));
+    assert.ok(calls.every(({ authorization }) => authorization === "Bearer unit-test-proxy-secret"));
+  });
+
+  it("shares simultaneous forecast requests and serves stale data during provider rate limits", async () => {
+    let releaseForecast!: () => void;
+    const forecastGate = new Promise<void>((resolve) => {
+      releaseForecast = resolve;
+    });
+    let forecastCalls = 0;
+    let rateLimited = false;
+    const service = new OpenMeteoWeatherService(async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname === "geocoding-api.open-meteo.com") {
+        const result = presetGeocoding[url.searchParams.get("name") ?? ""];
+        return response({
+          results: result ? [{
+            ...result,
+            country_code: "EG",
+            admin1: "Cairo Governorate",
+            timezone: "Africa/Cairo",
+            elevation: 70,
+          }] : [],
+        });
+      }
+      forecastCalls += 1;
+      if (!rateLimited) await forecastGate;
+      if (rateLimited) return response({}, 429, { "Retry-After": "45" });
+      return response(forecastResponse(
+        Number(url.searchParams.get("latitude")),
+        Number(url.searchParams.get("longitude")),
+      ));
+    }, 1000, 0, 60_000);
+
+    await service.listLocations();
+    const firstRequest = service.getWeather("nasr-city");
+    const secondRequest = service.getWeather("nasr-city");
+    releaseForecast();
+    const [first, second] = await Promise.all([firstRequest, secondRequest]);
+    assert.equal(forecastCalls, 1);
+    assert.equal(first, second);
+
+    rateLimited = true;
+    const stale = await service.getWeather("nasr-city");
+    assert.equal(stale.stale, true);
+    assert.equal(stale.retrieved_at, first.retrieved_at);
+    assert.equal(forecastCalls, 2);
+
+    await assert.rejects(
+      service.getWeather("new-cairo"),
+      (error: unknown) => error instanceof WeatherServiceError
+        && error.code === "WEATHER_PROVIDER_RATE_LIMITED"
+        && error.retryAfterSeconds !== undefined,
+    );
+    assert.equal(forecastCalls, 2);
+  });
+
+  it("honors the provider cooldown when no previous forecast is cached", async () => {
+    let calls = 0;
+    const service = new OpenMeteoWeatherService(async () => {
+      calls += 1;
+      return response({}, 429, { "Retry-After": "45" });
+    });
+    const isRateLimit = (error: unknown) => error instanceof WeatherServiceError
+      && error.code === "WEATHER_PROVIDER_RATE_LIMITED"
+      && error.retryAfterSeconds !== undefined;
+    await assert.rejects(service.getWeather(undefined, 30, 31), isRateLimit);
+    await assert.rejects(
+      service.getWeather(undefined, 30, 31),
+      (error: unknown) => isRateLimit(error) && error.retryAfterSeconds! > 0,
+    );
+    assert.equal(calls, 1);
+  });
+
   it("rejects unresolved areas and does not fabricate fallback conditions", async () => {
     const service = new OpenMeteoWeatherService(async () => response({}));
     await assert.rejects(

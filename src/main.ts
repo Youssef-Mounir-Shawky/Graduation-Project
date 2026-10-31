@@ -664,6 +664,7 @@ function renderWeather(): string {
     ${currentContent}
     ${hourlyCharts}
     ${dailyForecast}
+    ${weather?.stale ? '<p class="weather-cache-note" role="status">Open-Meteo is temporarily rate-limiting requests. Showing the most recent forecast while its service recovers.</p>' : ""}
     ${weather ? `<p class="weather-attribution">${escapeHtml(weather.attribution)} · Updated ${escapeHtml(formatWeatherTimestamp(weather.retrieved_at, "UTC", true))}</p>` : ""}`;
 }
 

@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { hashPassword } from "../http/auth.js";
+import { config } from "../config.js";
 import type { Pool, PoolClient } from "pg";
 
 const crops = [
@@ -95,25 +96,68 @@ async function seedSyntheticHistory(client: PoolClient): Promise<void> {
   const start = new Date(now);
   start.setUTCMonth(start.getUTCMonth() - 6);
   const hourMs = 60 * 60 * 1000;
-  const timestamps: Date[] = [];
-  for (let time = start.getTime(); time <= now.getTime(); time += hourMs) {
-    timestamps.push(new Date(time));
-  }
-  if (timestamps.at(-1)?.getTime() !== now.getTime()) timestamps.push(now);
-  const count = timestamps.length;
+  const historyCount = Math.floor((now.getTime() - start.getTime()) / hourMs) + 1;
   const chunkSize = 500;
 
   for (const zone of demoZones) {
-    const existing = await client.query(
-      "SELECT 1 FROM nileguard.sensor_readings WHERE zone_id = $1 AND data_source = 'synthetic' LIMIT 1",
+    const existing = await client.query<{
+      latest_reading: Date | null;
+      latest_synthetic: Date | null;
+      latest_gateway: Date | null;
+      synthetic_sequence: string | null;
+    }>(
+      `SELECT
+         MAX(measured_at) AS latest_reading,
+         MAX(measured_at) FILTER (WHERE data_source = 'synthetic') AS latest_synthetic,
+         MAX(measured_at) FILTER (WHERE data_source = 'gateway') AS latest_gateway,
+         MAX(sequence) FILTER (WHERE data_source = 'synthetic') AS synthetic_sequence
+       FROM nileguard.sensor_readings
+       WHERE zone_id = $1`,
       [zone.id],
     );
-    if (existing.rowCount) continue;
+    const status = existing.rows[0];
+    let timestamps: Date[] = [];
+    let extendsExistingHistory = false;
 
+    if (!status?.latest_synthetic) {
+      for (let time = start.getTime(); time <= now.getTime(); time += hourMs) {
+        timestamps.push(new Date(time));
+      }
+      if (timestamps.at(-1)?.getTime() !== now.getTime()) timestamps.push(now);
+    } else if (
+      config.mockHardware
+      && (!status.latest_gateway || status.latest_gateway.getTime() < now.getTime() - 24 * hourMs)
+    ) {
+      extendsExistingHistory = true;
+      const currentHour = Math.floor(now.getTime() / hourMs) * hourMs;
+      const firstHour = currentHour - 23 * hourMs;
+      const occupiedHours = await client.query<{ hour: Date }>(
+        `SELECT date_trunc('hour', measured_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS hour
+         FROM nileguard.sensor_readings
+         WHERE zone_id = $1
+           AND measured_at >= $2
+         GROUP BY 1`,
+        [zone.id, new Date(firstHour)],
+      );
+      const occupied = new Set(occupiedHours.rows.map(({ hour }) => hour.getTime()));
+      for (let time = firstHour; time <= currentHour; time += hourMs) {
+        if (!occupied.has(time)) timestamps.push(new Date(time));
+      }
+      if (!status.latest_reading || status.latest_reading.getTime() < now.getTime() - 5 * 60_000) {
+        timestamps.push(now);
+      }
+    } else {
+      continue;
+    }
+
+    if (!timestamps.length) continue;
+
+    const sequenceStart = extendsExistingHistory ? Number(status.synthetic_sequence ?? 0) : 0;
     const rows: Array<unknown[]> = [];
-    for (let index = 0; index < count; index += 1) {
-      const timestamp = timestamps[index];
-      const sample = mockMeasurement(zone, timestamp, index, count);
+    for (let offset = 0; offset < timestamps.length; offset += 1) {
+      const timestamp = timestamps[offset];
+      const historyIndex = Math.max(0, Math.floor((timestamp.getTime() - start.getTime()) / hourMs));
+      const sample = mockMeasurement(zone, timestamp, historyIndex, historyCount);
       rows.push([
         zone.node,
         zone.id,
@@ -128,7 +172,7 @@ async function seedSyntheticHistory(client: PoolClient): Promise<void> {
         sample.battery,
         sample.co2,
         sample.ph,
-        index + 1,
+        sequenceStart + offset + 1,
         "synthetic",
       ]);
     }
@@ -151,13 +195,13 @@ async function seedSyntheticHistory(client: PoolClient): Promise<void> {
       );
     }
 
-    const latest = mockMeasurement(zone, now, count - 1, count);
+    const latest = mockMeasurement(zone, now, historyCount - 1, historyCount);
     await client.query(
       `UPDATE nileguard.nodes
-       SET last_seen_at = COALESCE(last_seen_at, $2),
-           battery_mv = CASE WHEN last_seen_at IS NULL THEN $3 ELSE battery_mv END
+       SET last_seen_at = CASE WHEN $4 THEN $2 ELSE COALESCE(last_seen_at, $2) END,
+           battery_mv = CASE WHEN $4 OR last_seen_at IS NULL THEN $3 ELSE battery_mv END
        WHERE id = $1`,
-      [zone.node, now.toISOString(), latest.battery],
+      [zone.node, now.toISOString(), latest.battery, extendsExistingHistory],
     );
   }
 }
