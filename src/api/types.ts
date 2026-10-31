@@ -11,13 +11,10 @@ export interface ApiReading {
   id: string;
   node_id: string;
   zone: string;
-  moisture: number;
-  temp: number;
-  light_lux: number | null;
-  light_ppfd: number | null;
-  humidity: number;
-  co2_ppm: number | null;
-  soil_ph: number | null;
+  moisture: number | null;
+  temp: number | null;
+  shortwave_radiation_w_m2: number | null;
+  humidity: number | null;
   battery_mv: number;
   seq: number;
   gateway_id: string;
@@ -65,6 +62,7 @@ export interface ApiValveOverride {
 export interface ApiRecommendation {
   zoneId: string;
   action: "irrigate" | "do_not_irrigate" | "hold";
+  status: "READY" | "INSUFFICIENT_DATA" | "SENSOR_ERROR";
   recommendedValveState: "on" | "off" | null;
   effectiveValveState: "on" | "off";
   mode: "automatic" | "manual";
@@ -73,12 +71,51 @@ export interface ApiRecommendation {
   model: string;
   inputs: {
     moisturePercent: number | null;
+    moistureSource: "hardware" | "open-meteo" | "synthetic" | null;
     temperatureCelsius: number | null;
+    temperatureSource: "hardware" | "open-meteo" | "synthetic" | null;
     humidityPercent: number | null;
+    humiditySource: "hardware" | "open-meteo" | "synthetic" | null;
+    shortwaveRadiationWm2: number | null;
+    shortwaveRadiationSource: "hardware" | "open-meteo" | "synthetic" | null;
+    vaporPressureDeficitKpa: number | null;
     moistureThresholdPercent: number;
     growthStage: string;
     soilType: string;
   };
+}
+
+export interface ApiEnvironmentalObservation {
+  id: string;
+  zoneId: string;
+  parameter: "soil_moisture" | "air_temperature" | "relative_humidity" | "shortwave_radiation";
+  value: number | null;
+  unit: string;
+  source: "hardware" | "open-meteo" | "synthetic";
+  measuredAt: string;
+  receivedAt: string;
+  isValid: boolean;
+  isStale: boolean;
+  locationId: string | null;
+}
+
+export interface ApiEnvironmentalComparison {
+  id: string;
+  zoneId: string;
+  parameter: ApiEnvironmentalObservation["parameter"];
+  hardwareObservationId: string | null;
+  weatherObservationId: string | null;
+  status: "CONSISTENT" | "CONFLICT" | "HARDWARE_MISSING" | "WEATHER_MISSING" | "STALE_READING" | "INVALID_READING";
+  difference: number | null;
+  tolerance: number | null;
+  selectedObservationId: string | null;
+  selectedSource: ApiEnvironmentalObservation["source"] | null;
+  comparedAt: string;
+}
+
+export interface ApiEnvironmentalStatus {
+  observations: ApiEnvironmentalObservation[];
+  comparisons: ApiEnvironmentalComparison[];
 }
 
 export interface ApiAlert {

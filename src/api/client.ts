@@ -1,6 +1,7 @@
 import type {
   ApiAlert,
   ApiEnvelope,
+  ApiEnvironmentalStatus,
   ApiHealth,
   ApiRecommendation,
   ApiReading,
@@ -156,7 +157,10 @@ export function getWeatherLocations(): Promise<ApiWeatherLocation[]> {
   return requestData<ApiWeatherLocation[]>("/weather/locations");
 }
 
-export function getWeather(location?: string | { latitude: number; longitude: number }): Promise<ApiWeather> {
+export function getWeather(
+  location?: string | { latitude: number; longitude: number },
+  zoneId?: string,
+): Promise<ApiWeather> {
   const query = !location
     ? new URLSearchParams()
     : typeof location === "string"
@@ -165,8 +169,13 @@ export function getWeather(location?: string | { latitude: number; longitude: nu
       latitude: String(location.latitude),
       longitude: String(location.longitude),
     });
+  if (zoneId) query.set("zone_id", zoneId);
   const suffix = query.size ? `?${query.toString()}` : "";
   return requestData<ApiWeather>(`/weather${suffix}`);
+}
+
+export function getEnvironmentalStatus(zoneId: string): Promise<ApiEnvironmentalStatus> {
+  return requestData<ApiEnvironmentalStatus>(`/zones/${encodeURIComponent(zoneId)}/environment`);
 }
 
 export function setManualValve(zoneId: string, state: "on" | "off"): Promise<ApiValveOverride> {

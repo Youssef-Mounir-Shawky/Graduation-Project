@@ -4,6 +4,7 @@ const weatherVariables = {
   current: [
     "temperature_2m",
     "relative_humidity_2m",
+    "shortwave_radiation",
     "apparent_temperature",
     "weather_code",
     "cloud_cover",

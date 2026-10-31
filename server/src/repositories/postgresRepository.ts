@@ -1,6 +1,10 @@
 import type { Pool } from "pg";
 import type {
   Alert,
+  EnvironmentalComparison,
+  EnvironmentalObservation,
+  EnvironmentalParameter,
+  EnvironmentalSource,
   Crop,
   NileGuardRepository,
   Node,
@@ -22,6 +26,10 @@ function date(value: unknown): string | null {
 
 function numeric(value: unknown): number {
   return Number(value);
+}
+
+function nullableNumeric(value: unknown): number | null {
+  return value === null || value === undefined ? null : numeric(value);
 }
 
 function mapUser(row: Row): User {
@@ -77,13 +85,10 @@ function mapReading(row: Row): Reading {
     id: `${String(row.node_id)}-${String(row.sequence)}`,
     node_id: String(row.node_id),
     zone: String(row.zone_id),
-    moisture: numeric(row.soil_moisture_percent),
-    temp: numeric(row.air_temperature_c),
-    light_lux: row.light_lux === null ? null : numeric(row.light_lux),
-    light_ppfd: row.light_ppfd === null ? null : numeric(row.light_ppfd),
-    humidity: numeric(row.relative_humidity_percent),
-    co2_ppm: row.co2_ppm === null ? null : numeric(row.co2_ppm),
-    soil_ph: row.soil_ph === null ? null : numeric(row.soil_ph),
+    moisture: nullableNumeric(row.soil_moisture_percent),
+    temp: nullableNumeric(row.air_temperature_c),
+    shortwave_radiation_w_m2: nullableNumeric(row.shortwave_radiation_w_m2),
+    humidity: nullableNumeric(row.relative_humidity_percent),
     battery_mv: numeric(row.battery_mv),
     seq: numeric(row.sequence),
     gateway_id: String(row.gateway_id),
@@ -112,10 +117,42 @@ const zoneSelect = `
 
 const readingSelect = `
   SELECT node_id, zone_id, gateway_id, measured_at, received_at,
-         soil_moisture_percent, air_temperature_c, light_lux, light_ppfd,
-         relative_humidity_percent, battery_mv, co2_ppm, soil_ph, sequence, data_source
+         soil_moisture_percent, air_temperature_c, shortwave_radiation_w_m2,
+         relative_humidity_percent, battery_mv, sequence, data_source
   FROM nileguard.sensor_readings
 `;
+
+function mapEnvironmentalObservation(row: Row): EnvironmentalObservation {
+  return {
+    id: String(row.id),
+    zoneId: String(row.zone_id),
+    parameter: row.parameter as EnvironmentalParameter,
+    value: nullableNumeric(row.value),
+    unit: String(row.unit),
+    source: row.source as EnvironmentalSource,
+    measuredAt: date(row.measured_at) ?? new Date(0).toISOString(),
+    receivedAt: date(row.received_at) ?? new Date(0).toISOString(),
+    isValid: Boolean(row.is_valid),
+    isStale: Boolean(row.is_stale),
+    locationId: row.location_id ? String(row.location_id) : null,
+  };
+}
+
+function mapEnvironmentalComparison(row: Row): EnvironmentalComparison {
+  return {
+    id: String(row.id),
+    zoneId: String(row.zone_id),
+    parameter: row.parameter as EnvironmentalParameter,
+    hardwareObservationId: row.hardware_observation_id === null ? null : String(row.hardware_observation_id),
+    weatherObservationId: row.weather_observation_id === null ? null : String(row.weather_observation_id),
+    status: row.status as EnvironmentalComparison["status"],
+    difference: nullableNumeric(row.difference),
+    tolerance: nullableNumeric(row.tolerance),
+    selectedObservationId: row.selected_observation_id === null ? null : String(row.selected_observation_id),
+    selectedSource: row.selected_source as EnvironmentalSource | null,
+    comparedAt: date(row.compared_at) ?? new Date(0).toISOString(),
+  };
+}
 
 export class PostgresRepository implements NileGuardRepository {
   constructor(private readonly database: Pool) {}
@@ -353,12 +390,12 @@ export class PostgresRepository implements NileGuardRepository {
       await client.query(
         `INSERT INTO nileguard.sensor_readings (
            node_id, zone_id, gateway_id, measured_at, received_at,
-           soil_moisture_percent, air_temperature_c, light_lux, light_ppfd,
-           relative_humidity_percent, battery_mv, co2_ppm, soil_ph, sequence, data_source
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+           soil_moisture_percent, air_temperature_c, shortwave_radiation_w_m2,
+           relative_humidity_percent, battery_mv, sequence, data_source
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [reading.node_id, reading.zone, reading.gateway_id, reading.timestamp, reading.received_at,
-          reading.moisture, reading.temp, reading.light_lux, reading.light_ppfd, reading.humidity,
-          reading.battery_mv, reading.co2_ppm, reading.soil_ph, reading.seq, reading.data_source],
+          reading.moisture, reading.temp, reading.shortwave_radiation_w_m2, reading.humidity,
+          reading.battery_mv, reading.seq, reading.data_source],
       );
       await client.query(
         "UPDATE nileguard.nodes SET last_sequence = $2, last_seen_at = $3, battery_mv = $4 WHERE id = $1",
@@ -371,6 +408,70 @@ export class PostgresRepository implements NileGuardRepository {
     } finally {
       client.release();
     }
+  }
+
+  async recordEnvironmentalObservation(
+    observation: Omit<EnvironmentalObservation, "id">,
+  ): Promise<EnvironmentalObservation> {
+    const result = await this.database.query(
+      `INSERT INTO nileguard.environmental_observations (
+         zone_id, parameter, value, unit, source, measured_at, received_at, is_valid, is_stale, location_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [observation.zoneId, observation.parameter, observation.value, observation.unit,
+        observation.source, observation.measuredAt, observation.receivedAt,
+        observation.isValid, observation.isStale, observation.locationId],
+    );
+    return mapEnvironmentalObservation(result.rows[0]);
+  }
+
+  async getLatestEnvironmentalObservation(
+    zoneId: string,
+    parameter: EnvironmentalParameter,
+    source: EnvironmentalSource,
+  ): Promise<EnvironmentalObservation | undefined> {
+    const result = await this.database.query(
+      `SELECT * FROM nileguard.environmental_observations
+       WHERE zone_id = $1 AND parameter = $2 AND source = $3
+       ORDER BY measured_at DESC, id DESC LIMIT 1`,
+      [zoneId, parameter, source],
+    );
+    return result.rows[0] ? mapEnvironmentalObservation(result.rows[0]) : undefined;
+  }
+
+  async listEnvironmentalObservations(zoneId: string, limit = 500): Promise<EnvironmentalObservation[]> {
+    const result = await this.database.query(
+      `SELECT * FROM nileguard.environmental_observations
+       WHERE zone_id = $1 ORDER BY measured_at DESC, id DESC LIMIT $2`,
+      [zoneId, limit],
+    );
+    return result.rows.map(mapEnvironmentalObservation);
+  }
+
+  async recordEnvironmentalComparison(
+    comparison: Omit<EnvironmentalComparison, "id">,
+  ): Promise<EnvironmentalComparison> {
+    const result = await this.database.query(
+      `INSERT INTO nileguard.environmental_comparisons (
+         zone_id, parameter, hardware_observation_id, weather_observation_id, status,
+         difference, tolerance, selected_observation_id, selected_source, compared_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [comparison.zoneId, comparison.parameter, comparison.hardwareObservationId,
+        comparison.weatherObservationId, comparison.status, comparison.difference,
+        comparison.tolerance, comparison.selectedObservationId, comparison.selectedSource,
+        comparison.comparedAt],
+    );
+    return mapEnvironmentalComparison(result.rows[0]);
+  }
+
+  async listEnvironmentalComparisons(zoneId: string, limit = 500): Promise<EnvironmentalComparison[]> {
+    const result = await this.database.query(
+      `SELECT * FROM nileguard.environmental_comparisons
+       WHERE zone_id = $1 ORDER BY compared_at DESC, id DESC LIMIT $2`,
+      [zoneId, limit],
+    );
+    return result.rows.map(mapEnvironmentalComparison);
   }
 
   async getValve(zoneId: string): Promise<ValveControl | undefined> {
@@ -462,18 +563,14 @@ export class PostgresRepository implements NileGuardRepository {
     const sequence = snapshot.node.lastSequence + 1;
     const timestamp = new Date().toISOString();
     const daylight = Math.max(0, Math.sin(((new Date().getHours() - 6) / 12) * Math.PI));
-    const lux = Math.round(daylight * 20_000);
     const reading: Reading = {
       id: `${snapshot.node.id}-${sequence}`,
       node_id: snapshot.node.id,
       zone: zoneId,
       moisture: Math.max(12, Math.min(75, (previous?.moisture ?? 40) + (sequence % 2 ? -1 : 1))),
       temp: Number(((previous?.temp ?? 20) + (sequence % 2 ? -0.2 : 0.2)).toFixed(1)),
-      light_lux: lux,
-      light_ppfd: Number((lux / 54).toFixed(1)),
+      shortwave_radiation_w_m2: Number((daylight * 750).toFixed(1)),
       humidity: Math.max(35, Math.min(90, (previous?.humidity ?? 65) + (sequence % 2 ? 1 : -1))),
-      co2_ppm: previous?.co2_ppm ?? 450,
-      soil_ph: previous?.soil_ph ?? 6,
       battery_mv: snapshot.node.batteryMv,
       seq: sequence,
       gateway_id: snapshot.node.gatewayId,
@@ -508,7 +605,7 @@ export async function buildAlerts(repository: NileGuardRepository): Promise<Aler
       });
       continue;
     }
-    if (reading.moisture < snapshot.crop.moistureThresholdPercent) {
+    if (reading.moisture !== null && reading.moisture < snapshot.crop.moistureThresholdPercent) {
       alerts.push({
         id: `moisture-${snapshot.zone.id}`,
         type: "low_moisture",

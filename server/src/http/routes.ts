@@ -40,6 +40,11 @@ import {
 import { buildAlerts, PostgresRepository } from "../repositories/postgresRepository.js";
 import { isNodeOnline } from "../services/telemetry.js";
 import {
+  persistHardwareObservations,
+  persistWeatherObservations,
+  refreshEnvironmentalComparisons,
+} from "../services/environmentalReadings.js";
+import {
   openMeteoWeatherService,
   WeatherServiceError,
   type WeatherService,
@@ -206,11 +211,16 @@ export function createApiRouter(
   router.get("/weather", userAuth, async (request, response) => {
     const query = weatherQuerySchema.parse(request.query);
     try {
-      sendData(response, await weatherService.getWeather(
+      if (query.zone_id && !await repository.getZone(query.zone_id)) {
+        throw new ApiError(404, "ZONE_NOT_FOUND", `Zone '${query.zone_id}' was not found.`);
+      }
+      const weather = await weatherService.getWeather(
         query.location,
         query.latitude,
         query.longitude,
-      ));
+      );
+      if (query.zone_id) await persistWeatherObservations(repository, query.zone_id, weather);
+      sendData(response, weather);
     } catch (error) {
       if (error instanceof WeatherServiceError) {
         if (error.retryAfterSeconds !== undefined) response.set("Retry-After", String(error.retryAfterSeconds));
@@ -453,13 +463,10 @@ export function createApiRouter(
       id: `${input.node_id}-${input.seq}`,
       node_id: input.node_id,
       zone: input.zone,
-      moisture: input.moisture,
-      temp: input.temp,
-      light_lux: input.light_lux ?? null,
-      light_ppfd: input.light_ppfd ?? null,
-      humidity: input.humidity,
-      co2_ppm: input.co2_ppm ?? null,
-      soil_ph: input.soil_ph ?? null,
+      moisture: input.moisture ?? null,
+      temp: input.temp ?? null,
+      shortwave_radiation_w_m2: input.shortwave_radiation_w_m2 ?? null,
+      humidity: input.humidity ?? null,
       battery_mv: input.battery_mv,
       seq: input.seq,
       gateway_id: gatewayId,
@@ -475,9 +482,20 @@ export function createApiRouter(
       }
       throw error;
     }
+    await persistHardwareObservations(repository, reading);
     const recommendation = (await evaluateRecommendations(repository, decisionEngine, input.zone))[0];
     await applyAutomaticRecommendation(repository, recommendation);
     sendData(response, { reading, recommendation }, 201);
+  });
+
+  router.get("/zones/:zoneId/environment", userAuth, async (request, response) => {
+    const zoneId = parseZoneParams(request);
+    if (!await repository.getZone(zoneId)) throw new ApiError(404, "ZONE_NOT_FOUND", `Zone '${zoneId}' was not found.`);
+    await refreshEnvironmentalComparisons(repository, zoneId);
+    sendData(response, {
+      observations: await repository.listEnvironmentalObservations(zoneId, 100),
+      comparisons: await repository.listEnvironmentalComparisons(zoneId, 100),
+    });
   });
 
   router.get("/recommendations", userAuth, async (request, response) => {
@@ -603,6 +621,7 @@ export function createApiRouter(
         }
         const reading = await repository.simulateReading(id);
         await repository.recordReading(reading);
+        await persistHardwareObservations(repository, reading);
         const recommendation = (await evaluateRecommendations(repository, decisionEngine, id))[0];
         await applyAutomaticRecommendation(repository, recommendation);
         return {
