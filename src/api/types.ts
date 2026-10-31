@@ -104,8 +104,9 @@ export interface ApiScheduleEntry {
 }
 
 export interface ApiHealth {
-  status: "ok";
+  status: "ok" | "unavailable";
   persistence: "postgres" | "in-memory";
+  database: "connected" | "in-memory" | "unavailable";
   hardware: "mock" | "disabled";
   mock_hardware: boolean;
   timestamp: string;
@@ -114,6 +115,33 @@ export interface ApiHealth {
 export interface ApiReadingsResponse {
   readings: ApiReading[];
   count: number;
+}
+
+export interface ApiWeatherLocation {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  timezone?: string;
+  elevation?: number | null;
+  preset?: boolean;
+}
+
+export type ApiWeatherValue = string | number | boolean | null;
+
+export interface ApiWeather {
+  source: "open-meteo";
+  attribution: string;
+  retrieved_at: string;
+  location: ApiWeatherLocation;
+  units: {
+    current: Record<string, string>;
+    hourly: Record<string, string>;
+    daily: Record<string, string>;
+  };
+  current: Record<string, ApiWeatherValue>;
+  hourly: Record<string, Array<string | number | null>>;
+  daily: Record<string, Array<string | number | null>>;
 }
 
 export interface ApiSession {

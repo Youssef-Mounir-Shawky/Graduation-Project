@@ -81,6 +81,18 @@ export const readingsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(10_000).default(500),
 }).strict();
 
+export const weatherQuerySchema = z.object({
+  location: z.string().min(1).max(80).optional(),
+  latitude: z.coerce.number().min(-90).max(90).optional(),
+  longitude: z.coerce.number().min(-180).max(180).optional(),
+}).strict().refine(
+  (query) => (query.latitude === undefined) === (query.longitude === undefined),
+  { message: "Latitude and longitude must be provided together.", path: ["latitude"] },
+).refine(
+  (query) => query.latitude === undefined || query.location === undefined,
+  { message: "Choose a preset location or provide coordinates, not both.", path: ["location"] },
+);
+
 export const zoneParamsSchema = z.object({ zoneId: entityId });
 export const nodeParamsSchema = z.object({ nodeId: entityId });
 export const userParamsSchema = z.object({ userId: entityId });

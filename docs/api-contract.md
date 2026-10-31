@@ -32,8 +32,13 @@ Common dashboard routes:
 | `GET /api/readings?zone_id=<id>&hours=24&limit=500` | User | Read time-series data |
 | `GET /api/recommendations?zone_id=<id>` | User | Evaluate irrigation recommendations |
 | `GET /api/alerts`, `GET /api/irrigation/schedule` | User | Dashboard alerts and schedule |
+| `GET /api/weather/locations` | User | Resolve the configured Cairo-area presets using Open-Meteo Geocoding |
+| `GET /api/weather?location=nasr-city` | User | Current conditions, 24 hourly forecast points, and 7 daily forecast points from Open-Meteo |
+| `GET /api/weather?latitude=30.07&longitude=31.33` | User | Weather for future field/node coordinates without depending on sensor readings |
 | `PUT /api/zones/:zoneId/override` | User | Set `{ "valve_state": "on" | "off" }` manually |
 | `DELETE /api/zones/:zoneId/override` | User | Return valve control to automatic mode |
+
+Weather responses use the standard `{ "data": ... }` envelope. `GET /api/weather/locations` returns preset IDs (`nasr-city`, `new-cairo`, `masr-el-gedida`) with their Open-Meteo-resolved coordinates. `GET /api/weather` returns `source: "open-meteo"`, the selected `location`, `retrieved_at`, provider `units`, one `current` observation, and columnar `hourly` (24 timestamps) and `daily` (7 dates) forecasts. Variable names and units follow Open-Meteo, for example `temperature_2m` in °C, `relative_humidity_2m` in %, `precipitation` in mm, and `wind_speed_10m` in km/h. Provider timestamps are local to the returned `location.timezone`; missing measurements are `null`. Responses include Open-Meteo attribution. Both coordinate query parameters are required together. No weather response is derived from sensor history or fabricated if Open-Meteo is unavailable. The default preset is `nasr-city`; configure it with `WEATHER_DEFAULT_LOCATION`. The process-local forecast cache is keyed by location ID, coordinates, timezone, and forecast parameters and expires after 12 minutes by default.
 
 User creation fields include `name`, `email`, `phone_number`, `password`, and `role`. `PATCH /api/auth/me` accepts `name`, `email`, `phone_number`, and an optional `password`; it derives the account ID from the authenticated token and does not accept a role or other user ID. The API has no endpoint to edit another user's profile. Passwords are always bcrypt-hashed. Administrators can create or permanently delete accounts, but account owners maintain their own profile details. Deleting an account clears foreign-key audit references to it while sensor/irrigation history remains.
 
