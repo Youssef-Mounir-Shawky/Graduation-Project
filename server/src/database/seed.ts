@@ -49,24 +49,17 @@ function mockMeasurement(zone: typeof demoZones[number], timestamp: Date, index:
   const moisture = zone.moisture + soilOffset + cropOffset
     + Math.sin(index / (zone.soil === "loam" ? 11 : 7)) * (zone.soil === "loam" ? 4 : 6)
     - daylight * (zone.soil === "loam" ? 2 : 3);
-  const lux = daylight * (20_000 + 2_500 * seasonal);
+  const radiation = daylight * (600 + 100 * seasonal);
   const temperatureBase = zone.crop === "tomato" ? 22 : 18;
   const temperature = temperatureBase + seasonal * 1.8 + Math.sin(((hour - 8) / 24) * Math.PI * 2) * 3;
   const humidity = 67 - daylight * 10 - seasonal * 4 + Math.sin(index / 19) * 4;
-  const co2 = 425 + daylight * 170 + Math.sin(index / 35) * 35;
-  const soilPh = (zone.crop === "tomato" ? 6.4 : 5.6)
-    + (zone.soil === "loam" ? 0.1 : -0.1)
-    + Math.sin(index / 720) * 0.12;
   const batteryMv = 4_120 - (index / count) * 330 + Math.sin(index / 180) * 12;
 
   return {
     moisture: round(Math.min(75, Math.max(12, moisture))),
     temperature: round(temperature, 1),
-    lux: round(lux),
-    ppfd: round(lux / 54),
+    radiation: round(radiation),
     humidity: round(Math.min(90, Math.max(35, humidity))),
-    co2: round(Math.min(750, Math.max(380, co2))),
-    ph: round(Math.min(7.4, Math.max(4.8, soilPh)), 2),
     battery: Math.round(batteryMv),
   };
 }
@@ -166,12 +159,9 @@ async function seedSyntheticHistory(client: PoolClient): Promise<void> {
         timestamp.toISOString(),
         sample.moisture,
         sample.temperature,
-        sample.lux,
-        sample.ppfd,
+        sample.radiation,
         sample.humidity,
         sample.battery,
-        sample.co2,
-        sample.ph,
         sequenceStart + offset + 1,
         "synthetic",
       ]);
@@ -188,8 +178,8 @@ async function seedSyntheticHistory(client: PoolClient): Promise<void> {
       await client.query(
         `INSERT INTO nileguard.sensor_readings (
            node_id, zone_id, gateway_id, measured_at, received_at, soil_moisture_percent,
-           air_temperature_c, light_lux, light_ppfd, relative_humidity_percent,
-           battery_mv, co2_ppm, soil_ph, sequence, data_source
+           air_temperature_c, shortwave_radiation_w_m2, relative_humidity_percent,
+           battery_mv, sequence, data_source
          ) VALUES ${tuples.join(", ")}`,
         values,
       );

@@ -10,13 +10,10 @@ export const loginSchema = z.object({
 export const readingSchema = z.object({
   node_id: entityId,
   zone: entityId,
-  moisture: z.number().min(0).max(100),
-  temp: z.number().min(-50).max(80),
-  light_lux: z.number().min(0).max(2_000_000).nullable().optional(),
-  light_ppfd: z.number().min(0).max(100_000).nullable().optional(),
-  humidity: z.number().min(0).max(100),
-  co2_ppm: z.number().min(0).max(100_000).nullable().optional(),
-  soil_ph: z.number().min(0).max(14).nullable().optional(),
+  moisture: z.number().finite().nullable().optional(),
+  temp: z.number().finite().nullable().optional(),
+  shortwave_radiation_w_m2: z.number().finite().nullable().optional(),
+  humidity: z.number().finite().nullable().optional(),
   battery_mv: z.number().int().min(0).max(10_000),
   seq: z.number().int().min(1),
   gateway_id: entityId,
@@ -83,6 +80,7 @@ export const readingsQuerySchema = z.object({
 
 export const weatherQuerySchema = z.object({
   location: z.string().min(1).max(80).optional(),
+  zone_id: entityId.optional(),
   latitude: z.coerce.number().min(-90).max(90).optional(),
   longitude: z.coerce.number().min(-180).max(180).optional(),
 }).strict().refine(

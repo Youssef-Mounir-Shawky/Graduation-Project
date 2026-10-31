@@ -29,8 +29,8 @@ function forecastResponse(latitude: number, longitude: number): Record<string, u
     longitude,
     elevation: 70,
     timezone: "Africa/Cairo",
-    current_units: { time: "iso8601", temperature_2m: "°C", relative_humidity_2m: "%" },
-    current: { time: "2026-10-29T15:00", temperature_2m: 27.3, relative_humidity_2m: null },
+    current_units: { time: "iso8601", temperature_2m: "°C", relative_humidity_2m: "%", shortwave_radiation: "W/m²" },
+    current: { time: "2026-10-29T15:00", temperature_2m: 27.3, relative_humidity_2m: null, shortwave_radiation: 260 },
     hourly_units: {
       time: "iso8601",
       temperature_2m: "°C",
@@ -97,6 +97,7 @@ describe("Open-Meteo weather service", () => {
     assert.equal(nasrWeather.location.id, "nasr-city");
     assert.equal(nasrWeather.current.temperature_2m, 27.3);
     assert.equal(nasrWeather.current.relative_humidity_2m, null);
+    assert.equal(nasrWeather.current.shortwave_radiation, 260);
     assert.equal(nasrWeather.hourly.time?.length, 24);
     assert.equal(nasrWeather.hourly.temperature_2m?.[1], null);
     assert.equal(nasrWeather.hourly.pressure_msl?.[4], 1014);
@@ -109,6 +110,7 @@ describe("Open-Meteo weather service", () => {
       time: "iso8601",
       temperature_2m: "°C",
       relative_humidity_2m: "%",
+      shortwave_radiation: "W/m²",
     });
     assert.equal(cachedNasrWeather, nasrWeather);
     assert.equal(newCairoWeather.location.id, "new-cairo");

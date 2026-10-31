@@ -8,6 +8,7 @@ import {
   getAlerts,
   getCurrentUser,
   getHealth,
+  getEnvironmentalStatus,
   getReadings,
   getRecommendations,
   getSchedule,
@@ -27,6 +28,7 @@ import {
 } from "./api/client.js";
 import type {
   ApiAlert,
+  ApiEnvironmentalStatus,
   ApiRecommendation,
   ApiReading,
   ApiScheduleEntry,
@@ -90,6 +92,7 @@ const state: {
   users: ApiUser[];
   weatherLocations: ApiWeatherLocation[];
   weather: ApiWeather | null;
+  environmentalStatus: ApiEnvironmentalStatus | null;
   selectedWeatherLocationId: string;
   weatherLoading: boolean;
   weatherError: string;
@@ -128,6 +131,7 @@ const state: {
   users: [],
   weatherLocations: [],
   weather: null,
+  environmentalStatus: null,
   selectedWeatherLocationId: "",
   weatherLoading: false,
   weatherError: "",
@@ -276,6 +280,7 @@ function recommendationFor(zoneId: string): ApiRecommendation | undefined {
 function zoneStatus(zone: ApiZone): { label: string; tone: string } {
   if (!zone.node.online) return { label: "Offline", tone: "danger" };
   if (!zone.reading) return { label: "No readings", tone: "warning" };
+  if (zone.reading.moisture === null) return { label: "Soil moisture unavailable", tone: "warning" };
   if (zone.reading.moisture < zone.moisture_threshold_percent) return { label: "Needs water", tone: "warning" };
   return { label: "Healthy", tone: "success" };
 }
@@ -341,7 +346,7 @@ function renderNav(): string {
   }).join("");
 }
 
-type NumericReadingKey = "moisture" | "temp" | "humidity" | "light_lux" | "light_ppfd" | "co2_ppm" | "soil_ph" | "battery_mv";
+type NumericReadingKey = "moisture" | "temp" | "humidity" | "shortwave_radiation_w_m2" | "battery_mv";
 type DailyPoint = { timestamp: string; value: number };
 
 function sampleEvenly<T>(items: T[], maximum: number): T[] {
@@ -415,42 +420,6 @@ function renderSeriesPanel(
     </svg>
     <div class="chart-tooltip" aria-hidden="true"></div>
     <div class="analytics-chart-footer"><span>${points.length} ${state.range === "24 hours" ? "hours" : "days"} with readings</span><span>Mean ${escapeHtml(meanText)}</span>${options.target ? `<span>Configured target ${options.target[0]}–${options.target[1]}${escapeHtml(unit)}</span>` : ""}</div>
-  </section>`;
-}
-
-function renderPhPie(readings: ApiReading[]): string {
-  const phValues = readings.flatMap((reading) => reading.soil_ph === null ? [] : [reading.soil_ph]);
-  if (!phValues.length) {
-    return `<section class="panel analytics-chart-panel"><div class="panel__header"><div><p class="eyebrow">Observed pH bands</p><h2>Soil pH distribution</h2></div></div><div class="chart-empty">No soil pH measurements are available for this zone.</div></section>`;
-  }
-  const categories = [
-    { label: "Below 6.0", count: phValues.filter((value) => value < 6).length, color: "primary" },
-    { label: "6.0–7.0", count: phValues.filter((value) => value >= 6 && value <= 7).length, color: "warning" },
-    { label: "Above 7.0", count: phValues.filter((value) => value > 7).length, color: "info" },
-  ];
-  let angle = -Math.PI / 2;
-  const radius = 62;
-  const segments = categories.map((category) => {
-    if (!category.count) return "";
-    if (category.count === phValues.length) {
-      return `<circle class="ph-pie__segment ph-pie__segment--${category.color}" cx="80" cy="80" r="${radius}" ${chartTip(category.label, [`Readings: ${category.count.toLocaleString()}`, "Share: 100.0%"])}/>`;
-    }
-    const nextAngle = angle + (category.count / phValues.length) * Math.PI * 2;
-    const x1 = 80 + radius * Math.cos(angle);
-    const y1 = 80 + radius * Math.sin(angle);
-    const x2 = 80 + radius * Math.cos(nextAngle);
-    const y2 = 80 + radius * Math.sin(nextAngle);
-    const largeArc = nextAngle - angle > Math.PI ? 1 : 0;
-    const path = `M 80 80 L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${radius} ${radius} 0 ${largeArc} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`;
-    const segment = `<path class="ph-pie__segment ph-pie__segment--${category.color}" d="${path}" ${chartTip(category.label, [`Readings: ${category.count.toLocaleString()}`, `Share: ${((category.count / phValues.length) * 100).toFixed(1)}%`])}/>`;
-    angle = nextAngle;
-    return segment;
-  }).join("");
-  return `<section class="panel analytics-chart-panel">
-    <div class="panel__header"><div><p class="eyebrow">Observed pH bands</p><h2>Soil pH distribution</h2></div><span class="status status--info">${phValues.length.toLocaleString()} readings</span></div>
-    <div class="ph-donut-layout"><svg class="ph-pie" viewBox="0 0 160 160" role="img" aria-label="Pie chart of soil pH readings across three ranges">${segments}</svg>
-      <ul class="ph-donut__legend">${categories.map((category) => `<li><span><i class="legend-dot legend-dot--${category.color}"></i>${category.label}</span><strong>${((category.count / phValues.length) * 100).toFixed(1)}%</strong></li>`).join("")}</ul>
-    </div><div class="chart-tooltip" aria-hidden="true"></div><p class="analytics-note">Descriptive ranges only; they are not crop-specific pH recommendations.</p>
   </section>`;
 }
 
@@ -592,36 +561,25 @@ function renderAnalytics(): string {
   const zone = selectedZone();
   const readings = state.historyReadings;
   const moisture = rangeAverages(readings, "moisture");
-  const ph = rangeAverages(readings, "soil_ph");
-  const ppfd = rangeAverages(readings, "light_ppfd");
-  const lux = rangeAverages(readings, "light_lux");
-  const moisturePh = renderRelationshipChart(readings, {
-    title: "Moisture vs soil pH",
-    xKey: "moisture",
-    xLabel: "Soil moisture",
-    xUnit: "%",
-    yKey: "soil_ph",
-    yLabel: "Soil pH",
-    yUnit: " pH",
-  });
+  const temperature = rangeAverages(readings, "temp");
+  const humidity = rangeAverages(readings, "humidity");
+  const radiation = rangeAverages(readings, "shortwave_radiation_w_m2");
   const latest = zone?.reading;
   const origin = latest?.data_source ?? "no current reading";
   const historySources = Array.from(new Set(readings.map((reading) => reading.data_source))).join(" + ") || "no stored readings";
   return `<div class="dashboard-heading analytics-heading"><div><p class="eyebrow">Field record · ${escapeHtml(state.range)} · ${escapeHtml(historySources)}</p><h1>Analytics</h1><p class="page-intro">Sensor averages and relationships for the selected crop and soil pairing. Readings are labeled by their data source.</p></div><div class="analytics-controls">${renderRangePicker("Analytics time range")}${renderZonePicker(zone)}</div></div>
     <div class="analytics-summary-grid">
-      ${renderSummaryCard("Soil moisture", latest ? latest.moisture.toFixed(1) : "—", latest ? "%" : "", `Latest · ${origin}`)}
-      ${renderSummaryCard("Soil pH", latest?.soil_ph == null ? "—" : latest.soil_ph.toFixed(2), "", `Latest · ${origin}`)}
-      ${renderSummaryCard("Light intensity", latest?.light_ppfd == null ? "—" : latest.light_ppfd.toFixed(1), latest?.light_ppfd == null ? "" : " µmol/m²/s", `PPFD · ${latest?.light_lux == null ? "—" : `${latest.light_lux.toFixed(0)} lux`} · ${origin}`)}
+      ${renderSummaryCard("Soil moisture", latest?.moisture == null ? "—" : latest.moisture.toFixed(1), latest?.moisture == null ? "" : "%", `Latest · ${origin}`)}
+      ${renderSummaryCard("Shortwave solar radiation", latest?.shortwave_radiation_w_m2 == null ? "—" : latest.shortwave_radiation_w_m2.toFixed(1), latest?.shortwave_radiation_w_m2 == null ? "" : " W/m²", `Radiation measurement · ${origin}`)}
+      ${renderSummaryCard("Relative humidity", latest?.humidity == null ? "—" : latest.humidity.toFixed(1), latest?.humidity == null ? "" : " % RH", `Latest · ${origin}`)}
     </div>
     <div class="analytics-chart-grid">
       ${renderSeriesPanel("Soil moisture", moisture, "%", "primary", { area: true, domain: [0, 100], target: zone ? [zone.moisture_target_min_percent, zone.moisture_target_max_percent] : undefined })}
-      ${renderSeriesPanel("Soil pH", ph, " pH", "warning", { decimals: 2 })}
-      ${renderSeriesPanel("Light intensity · PPFD", ppfd, " µmol/m²/s", "info", { area: true })}
-      ${renderSeriesPanel("Light intensity · lux", lux, " lux", "primary", { decimals: 0 })}
+      ${renderSeriesPanel("Air temperature", temperature, " °C", "warning", { area: true })}
+      ${renderSeriesPanel("Shortwave solar radiation", radiation, " W/m²", "primary", { area: true })}
+      ${renderSeriesPanel("Relative humidity", humidity, " % RH", "info", { area: true, domain: [0, 100] })}
       ${renderHistogram("Soil moisture", moisture, "%", "primary")}
-      ${moisturePh}
-      ${renderRelationshipChart(readings, { title: "Moisture, pH & light", xKey: "moisture", xLabel: "Soil moisture", xUnit: "%", yKey: "soil_ph", yLabel: "Soil pH", yUnit: " pH", sizeKey: "light_ppfd", sizeLabel: "Light intensity · PPFD", sizeUnit: " µmol/m²/s", bubble: true })}
-      ${renderPhPie(readings)}
+      ${renderRelationshipChart(readings, { title: "Moisture vs air temperature", xKey: "moisture", xLabel: "Soil moisture", xUnit: "%", yKey: "temp", yLabel: "Air temperature", yUnit: "°C" })}
     </div>`;
 }
 
@@ -640,32 +598,117 @@ function renderWeather(): string {
       <div class="panel weather-skeleton weather-skeleton--daily"><span></span><span></span><span></span></div>
     </section>`;
   }
-  if (state.weatherError) return `${header}${renderWeatherError()}`;
+  const weatherRetrievedAt = Date.parse(weather?.retrieved_at ?? "");
+  const currentWeatherAt = parseWeatherTimestampUtc(current?.time, weather?.location.timezone);
+  const weatherCurrentAge = Date.now() - currentWeatherAt;
+  const weatherCurrentFresh = Boolean(weather && !weather.stale
+    && Number.isFinite(weatherRetrievedAt)
+    && Date.now() - weatherRetrievedAt <= 30 * 60_000
+    && Date.now() - weatherRetrievedAt >= -5 * 60_000
+    && Number.isFinite(currentWeatherAt)
+    && weatherCurrentAge <= 30 * 60_000
+    && weatherCurrentAge >= -5 * 60_000);
+  const sensor = selectedZone()?.reading;
+  const sensorFresh = Boolean(sensor && Date.now() - Date.parse(sensor.timestamp) <= 5 * 60_000
+    && Date.now() - Date.parse(sensor.timestamp) >= -5 * 60_000);
+  const selectedCurrentMetric = (
+    key: "temperature_2m" | "relative_humidity_2m",
+    sensorValue: number | null | undefined,
+    min: number,
+    max: number,
+    digits: number,
+    weatherUnit: string,
+  ) => {
+    const weatherValue = current?.[key];
+    const parameter = key === "temperature_2m" ? "air_temperature" : "relative_humidity";
+    const comparison = state.environmentalStatus?.comparisons.find((item) => item.parameter === parameter);
+    const weatherSelected = !comparison || comparison.selectedSource === "open-meteo";
+    if (weatherCurrentFresh && weatherSelected && typeof weatherValue === "number" && weatherValue >= min && weatherValue <= max) {
+      return {
+        display: `${weatherValue.toFixed(digits)} ${unit(key) || weatherUnit}`,
+        source: "Open-Meteo",
+        timestamp: formatWeatherTimestamp(current?.time, weather?.location.timezone, true),
+        fromFallback: false,
+      };
+    }
+    if (sensorFresh && typeof sensorValue === "number" && sensorValue >= min && sensorValue <= max) {
+      return {
+        display: `${sensorValue.toFixed(digits)} ${weatherUnit}`,
+        source: sensor?.data_source === "gateway" ? "Hardware" : "Simulated hardware",
+        timestamp: formatWeatherTimestamp(sensor?.timestamp, "UTC", true),
+        fromFallback: true,
+      };
+    }
+    return {
+      display: "—",
+      source: "Unavailable",
+      timestamp: "",
+      fromFallback: false,
+    };
+  };
+  const selectedTemperature = selectedCurrentMetric("temperature_2m", sensor?.temp, -50, 80, 1, "°C");
+  const selectedHumidity = selectedCurrentMetric("relative_humidity_2m", sensor?.humidity, 0, 100, 0, "%");
 
   const currentContent = weather && current
     ? `<section class="panel current-weather-card">
             <div class="current-weather-card__headline">
-              <div><p class="eyebrow">${escapeHtml(locationName)} · ${escapeHtml(weather.location.timezone ?? "local time")}</p><h2>${escapeHtml(weatherCodeDescription(current.weather_code))}</h2><p>${escapeHtml(formatWeatherTimestamp(current.time, weather.location.timezone, true))}</p></div>
-              <strong class="current-weather-card__temperature">${escapeHtml(value("temperature_2m"))}<small>${escapeHtml(unit("temperature_2m"))}</small></strong>
+              <div><p class="eyebrow">${escapeHtml(locationName)} · ${escapeHtml(weather.location.timezone ?? "local time")}</p><h2>${escapeHtml(weatherCurrentFresh ? weatherCodeDescription(current.weather_code) : "Live weather unavailable")}</h2><p>${escapeHtml(selectedTemperature.source)} · ${escapeHtml(selectedTemperature.timestamp)}</p></div>
+              <strong class="current-weather-card__temperature">${escapeHtml(selectedTemperature.display)}</strong>
             </div>
             <div class="weather-metric-grid">
-              ${renderWeatherMetric("Feels like", value("apparent_temperature"), unit("apparent_temperature"), "thermometer")}
-              ${renderWeatherMetric("Humidity", value("relative_humidity_2m", 0), unit("relative_humidity_2m"), "humidity")}
-              ${renderWeatherMetric("Wind speed", value("wind_speed_10m"), unit("wind_speed_10m"), "forecast")}
-              ${renderWeatherMetric("Wind direction", value("wind_direction_10m", 0), unit("wind_direction_10m"), "forecast")}
-              ${renderWeatherMetric("Cloud cover", value("cloud_cover", 0), unit("cloud_cover"), "weather")}
-              ${renderWeatherMetric("Pressure", value("pressure_msl"), unit("pressure_msl"), "analytics")}
+              ${renderWeatherMetric("Feels like", weatherCurrentFresh ? value("apparent_temperature") : "—", weatherCurrentFresh ? unit("apparent_temperature") : "", "thermometer")}
+              ${renderWeatherMetric("Humidity", selectedHumidity.display, "", "humidity")}
+              ${renderWeatherMetric("Wind speed", weatherCurrentFresh ? value("wind_speed_10m") : "—", weatherCurrentFresh ? unit("wind_speed_10m") : "", "forecast")}
+              ${renderWeatherMetric("Wind direction", weatherCurrentFresh ? value("wind_direction_10m", 0) : "—", weatherCurrentFresh ? unit("wind_direction_10m") : "", "forecast")}
+              ${renderWeatherMetric("Cloud cover", weatherCurrentFresh ? value("cloud_cover", 0) : "—", weatherCurrentFresh ? unit("cloud_cover") : "", "weather")}
+              ${renderWeatherMetric("Pressure", weatherCurrentFresh ? value("pressure_msl") : "—", weatherCurrentFresh ? unit("pressure_msl") : "", "analytics")}
             </div>
+            <p class="weather-attribution">Temperature: ${escapeHtml(selectedTemperature.source)}${selectedTemperature.fromFallback ? " fallback" : ""} · Humidity: ${escapeHtml(selectedHumidity.source)}${selectedHumidity.fromFallback ? " fallback" : ""}</p>
           </section>`
-        : '<div class="panel weather-state">Current weather is not available for this location.</div>';
+        : sensorFresh && (selectedTemperature.source !== "Unavailable" || selectedHumidity.source !== "Unavailable")
+          ? `<section class="panel current-weather-card"><div class="current-weather-card__headline"><div><p class="eyebrow">${escapeHtml(selectedZone()?.name ?? "Selected zone")}</p><h2>Open-Meteo unavailable · physical sensor fallback</h2><p>Latest fresh sensor readings</p></div><strong class="current-weather-card__temperature">${escapeHtml(selectedTemperature.display)}</strong></div><div class="weather-metric-grid">${renderWeatherMetric("Humidity", selectedHumidity.display, "", "humidity")}</div></section>`
+          : '<div class="panel weather-state">Current temperature and humidity are unavailable from both Open-Meteo and fresh physical readings.</div>';
   const hourlyCharts = weather ? renderWeatherHourlyCharts(weather) : "";
   const dailyForecast = weather ? renderWeatherDailyForecast(weather) : "";
   return `${header}
+    ${state.weatherError ? renderWeatherError() : ""}
     ${currentContent}
+    ${renderEnvironmentalComparison()}
     ${hourlyCharts}
     ${dailyForecast}
     ${weather?.stale ? '<p class="weather-cache-note" role="status">Open-Meteo is temporarily rate-limiting requests. Showing the most recent forecast while its service recovers.</p>' : ""}
     ${weather ? `<p class="weather-attribution">${escapeHtml(weather.attribution)} · Updated ${escapeHtml(formatWeatherTimestamp(weather.retrieved_at, "UTC", true))}</p>` : ""}`;
+}
+
+function renderEnvironmentalComparison(): string {
+  const zone = selectedZone();
+  const data = state.environmentalStatus;
+  const parameters = [
+    ["air_temperature", "Air temperature"],
+    ["relative_humidity", "Relative humidity"],
+  ] as const;
+  const observations = data?.observations ?? [];
+  const comparisons = data?.comparisons ?? [];
+  const rows = parameters.map(([parameter, label]) => {
+    const hardware = observations.find((item) => item.parameter === parameter && item.source !== "open-meteo");
+    const weather = observations.find((item) => item.parameter === parameter && item.source === "open-meteo");
+    const comparison = comparisons.find((item) => item.parameter === parameter);
+    const selected = observations.find((item) => item.id === comparison?.selectedObservationId);
+    const formatObservation = (observation: typeof hardware) => observation?.value === null || !observation
+      ? "Unavailable"
+      : `${observation.value.toFixed(1)} ${observation.unit} · ${observation.source === "open-meteo" ? "Open-Meteo" : observation.source === "synthetic" ? "Simulated hardware" : "Hardware"} · ${formatWeatherTimestamp(observation.measuredAt, "UTC", true)}${observation.isValid ? "" : " · Invalid"}${observation.isStale ? " · Stale" : ""}`;
+    const status = comparison?.status ?? "HARDWARE_MISSING";
+    return `<article class="environment-reading-row">
+      <strong>${escapeHtml(label)}</strong>
+      <span><small>Hardware</small>${escapeHtml(formatObservation(hardware))}</span>
+      <span><small>Open-Meteo</small>${escapeHtml(formatObservation(weather))}</span>
+      <span class="environment-reading-row__selection"><small>Comparison · selected</small><b class="status status--${status === "CONSISTENT" ? "success" : status === "CONFLICT" || status === "INVALID_READING" ? "warning" : "info"}">${escapeHtml(status)}</b> · ${escapeHtml(selected ? `${selected.source} · ${selected.value ?? "—"} ${selected.unit}` : "Unavailable")}</span>
+    </article>`;
+  }).join("");
+  return `<section class="panel environmental-comparison">
+    <div class="panel__header"><div><p class="eyebrow">Validated inputs · ${escapeHtml(zone?.name ?? "No selected zone")}</p><h2>Temperature and humidity comparison</h2><p class="panel-subtitle">Only temperature and humidity are compared. Invalid or stale Open-Meteo values fall back to valid, fresh physical sensor readings.</p></div></div>
+    ${data ? `<div class="environment-reading-list">${rows}</div>` : '<p class="empty-copy">Comparison records are unavailable until a zone is selected and weather is loaded.</p>'}
+  </section>`;
 }
 
 function formatWeatherValue(value: unknown, digits = 1): string {
@@ -699,6 +742,38 @@ function formatWeatherTimestamp(value: unknown, timeZone?: string, includeDate =
     }).format(timestamp);
   } catch {
     return value;
+  }
+}
+
+function parseWeatherTimestampUtc(value: unknown, timeZone?: string): number {
+  if (typeof value !== "string") return Number.NaN;
+  if (/[zZ]|[+-]\d{2}:\d{2}$/.test(value)) return Date.parse(value);
+  if (!timeZone || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(value)) return Number.NaN;
+  const candidate = Date.parse(`${value}${value.length === 16 ? ":00" : ""}Z`);
+  if (!Number.isFinite(candidate)) return Number.NaN;
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(candidate));
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value;
+    const displayedAsUtc = Date.UTC(
+      Number(part("year")),
+      Number(part("month")) - 1,
+      Number(part("day")),
+      Number(part("hour")),
+      Number(part("minute")),
+      Number(part("second")),
+    );
+    return candidate - (displayedAsUtc - candidate);
+  } catch {
+    return Number.NaN;
   }
 }
 
@@ -778,7 +853,7 @@ function renderWeatherHourlyCharts(weather: ApiWeather): string {
     <div class="analytics-chart-grid weather-chart-grid">
       ${renderWeatherChart("Air temperature", series("temperature_2m"), weather.units.hourly.temperature_2m ?? "", "primary", "max")}
       ${renderWeatherChart("Humidity", series("relative_humidity_2m"), weather.units.hourly.relative_humidity_2m ?? "%", "info", "average")}
-      ${renderWeatherChart("Light intensity · solar radiation", series("shortwave_radiation"), weather.units.hourly.shortwave_radiation ?? "W/m²", "info", "average")}
+      ${renderWeatherChart("Shortwave solar radiation", series("shortwave_radiation"), weather.units.hourly.shortwave_radiation ?? "W/m²", "info", "average")}
       ${renderWeatherChart("Air pressure", series("pressure_msl"), weather.units.hourly.pressure_msl ?? "hPa", "primary", "average")}
     </div>
   </section>`;
@@ -790,6 +865,7 @@ function renderWeatherChart(
   unit: string,
   color: "primary" | "info",
   summary: "max" | "average",
+  periodLabel = "Next 24h",
 ): string {
   const width = 760;
   const height = 250;
@@ -815,7 +891,7 @@ function renderWeatherChart(
       : `${(numericValues.reduce((total, value) => total + value, 0) / numericValues.length).toFixed(0)}${unitLabel}`
     : "—";
   const summaryLabel = summary === "max" ? "Max" : "Avg";
-  const header = `<div class="panel__header"><div><p class="eyebrow">Next 24h</p><h2>${escapeHtml(title)}</h2></div><div class="analytics-chart-summary"><strong>${escapeHtml(summaryValue)}</strong><span>${summaryLabel}</span></div></div>`;
+  const header = `<div class="panel__header"><div><p class="eyebrow">${escapeHtml(periodLabel)}</p><h2>${escapeHtml(title)}</h2></div><div class="analytics-chart-summary"><strong>${escapeHtml(summaryValue)}</strong><span>${summaryLabel}</span></div></div>`;
   if (!points.length) {
     return `<section class="panel analytics-chart-panel weather-chart-panel">${header}<div class="chart-empty">${escapeHtml(title)} data is unavailable.</div></section>`;
   }
@@ -897,7 +973,8 @@ function renderWeatherDailyForecast(weather: ApiWeather): string {
 
 function renderChart(): string {
   const zone = selectedZone();
-  if (!zone || state.readings.length === 0) {
+  const moistureReadings = state.readings.filter((reading) => reading.moisture !== null);
+  if (!zone || moistureReadings.length === 0) {
     return `<div class="chart-empty">No sensor readings are available for this time range.</div>`;
   }
 
@@ -907,20 +984,20 @@ function renderChart(): string {
   const right = width - 18;
   const top = 18;
   const bottom = 204;
-  const sample = sampleEvenly(state.readings.map((reading, index) => ({ reading, index })), 180);
+  const sample = sampleEvenly(moistureReadings.map((reading, index) => ({ reading, index })), 180);
   const coords = sample.map(({ reading, index }) => ({
     reading,
-    x: left + (index / Math.max(state.readings.length - 1, 1)) * (right - left),
-    y: bottom - (reading.moisture / 100) * (bottom - top),
+    x: left + (index / Math.max(moistureReadings.length - 1, 1)) * (right - left),
+    y: bottom - ((reading.moisture ?? 0) / 100) * (bottom - top),
   }));
   const linePath = coords.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
   const areaPath = `${linePath} L ${right},${bottom} L ${left},${bottom} Z`;
   const targetTop = bottom - (zone.moisture_target_max_percent / 100) * (bottom - top);
   const targetBottom = bottom - (zone.moisture_target_min_percent / 100) * (bottom - top);
-  const startLabel = state.readings[0].timestamp;
-  const endLabel = state.readings[state.readings.length - 1].timestamp;
+  const startLabel = moistureReadings[0].timestamp;
+  const endLabel = moistureReadings[moistureReadings.length - 1].timestamp;
   const markers = coords.map(({ reading, x, y }) => {
-    return `<circle class="analytics-hit-point analytics-hit-point--primary" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="8" ${chartTip(`${formatRangePoint(reading.timestamp)} · ${state.range === "24 hours" ? formatTime(reading.timestamp) : ""}`, [`X · Time: ${formatDate(reading.timestamp)} ${formatTime(reading.timestamp)}`, `Y · Soil moisture: ${reading.moisture.toFixed(1)}%`])}/>`;
+    return `<circle class="analytics-hit-point analytics-hit-point--primary" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="8" ${chartTip(`${formatRangePoint(reading.timestamp)} · ${state.range === "24 hours" ? formatTime(reading.timestamp) : ""}`, [`X · Time: ${formatDate(reading.timestamp)} ${formatTime(reading.timestamp)}`, `Y · Soil moisture: ${reading.moisture?.toFixed(1) ?? "—"}%`])}/>`;
   }).join("");
   const grid = [0, 25, 50, 75, 100].map((value) => {
     const y = bottom - (value / 100) * (bottom - top);
@@ -940,7 +1017,7 @@ function renderChart(): string {
     </svg>
     <div class="chart-tooltip" aria-hidden="true"></div>
   </div>
-  <div class="chart-legend"><span><i class="legend-dot legend-dot--primary"></i>Soil moisture</span><span><i class="legend-dot legend-dot--target"></i>Target band · ${zone.moisture_target_min_percent}–${zone.moisture_target_max_percent}%</span><span>${state.readings.length} readings · ${escapeHtml(state.range)}</span></div>`;
+  <div class="chart-legend"><span><i class="legend-dot legend-dot--primary"></i>Soil moisture</span><span><i class="legend-dot legend-dot--target"></i>Target band · ${zone.moisture_target_min_percent}–${zone.moisture_target_max_percent}%</span><span>${moistureReadings.length} readings · ${escapeHtml(state.range)}</span></div>`;
 }
 
 function renderMetric(label: string, value: string, unit: string, detail: string, iconName: string): string {
@@ -950,8 +1027,10 @@ function renderMetric(label: string, value: string, unit: string, detail: string
 function renderZoneRow(zone: ApiZone): string {
   const status = zoneStatus(zone);
   const reading = zone.reading;
-  const moisture = reading ? `${reading.moisture}%` : "—";
-  const climate = reading ? `${reading.temp.toFixed(1)}°C · ${reading.humidity}% RH` : "Waiting for first reading";
+  const moisture = reading?.moisture === null || reading?.moisture === undefined ? "—" : `${reading.moisture}%`;
+  const climate = reading
+    ? `${reading.temp === null ? "—" : `${reading.temp.toFixed(1)}°C`} · ${reading.humidity === null ? "—" : `${reading.humidity}% RH`}`
+    : "Waiting for first reading";
   return `<button class="zone-row ${state.selectedZoneId === zone.id ? "is-selected" : ""}" type="button" data-action="select-zone" data-zone="${escapeHtml(zone.id)}" aria-pressed="${state.selectedZoneId === zone.id}">
     <span class="zone-symbol">${icon("leaf")}</span>
     <span class="zone-info"><strong>${escapeHtml(zone.name)}</strong><small>${escapeHtml(zone.crop)} · ${escapeHtml(climate)}</small></span>
@@ -979,11 +1058,9 @@ function renderOverview(): string {
   </div>
   <section class="metric-grid" aria-label="Greenhouse summary">
     ${renderMetric("Connected nodes", `${activeNodes}/${state.zones.length}`, "", activeNodes === state.zones.length ? "All reporting within 5 minutes" : "One or more nodes need checking", "zones")}
-    ${renderMetric("Soil moisture", reading ? String(reading.moisture) : "—", reading ? "%" : "", zone ? `${zone.name} · ${zone.valve.mode} mode` : "No zones configured", "irrigation")}
-    ${renderMetric("Temperature · humidity", reading ? `${reading.temp.toFixed(1)}°` : "—", reading ? `C · ${reading.humidity}% RH` : "", reading ? `Battery ${zone?.node.battery_mv ?? "—"} mV` : "Waiting for sensor readings", "thermometer")}
-    ${renderMetric("Light intensity", reading?.light_ppfd === null || reading?.light_ppfd === undefined ? "—" : reading.light_ppfd.toFixed(1), reading?.light_ppfd == null ? "" : "µmol/m²/s", reading?.light_lux == null ? "PPFD · Lux unavailable" : `${reading.light_lux.toFixed(0)} lux · ${reading.data_source} data`, "trends")}
-    ${renderMetric("CO₂ concentration", reading?.co2_ppm == null ? "—" : reading.co2_ppm.toFixed(0), reading?.co2_ppm == null ? "" : "ppm", reading ? `${reading.data_source} sensor sample` : "Waiting for sensor readings", "humidity")}
-    ${renderMetric("Soil pH", reading?.soil_ph == null ? "—" : reading.soil_ph.toFixed(2), reading?.soil_ph == null ? "" : "pH", reading ? `${reading.data_source} sensor sample` : "Waiting for sensor readings", "droplet")}
+    ${renderMetric("Soil moisture", reading?.moisture == null ? "—" : String(reading.moisture), reading?.moisture == null ? "" : "%", zone ? `${zone.name} · ${zone.valve.mode} mode` : "No zones configured", "irrigation")}
+    ${renderMetric("Temperature · humidity", reading?.temp == null ? "—" : `${reading.temp.toFixed(1)}°`, reading?.temp == null ? "" : `C · ${reading.humidity == null ? "—" : `${reading.humidity}% RH`}`, reading ? `Battery ${zone?.node.battery_mv ?? "—"} mV` : "Waiting for sensor readings", "thermometer")}
+    ${renderMetric("Shortwave radiation", reading?.shortwave_radiation_w_m2 == null ? "—" : reading.shortwave_radiation_w_m2.toFixed(1), reading?.shortwave_radiation_w_m2 == null ? "" : "W/m²", "Primary weather and sensor light input", "trends")}
   </section>
   <div class="dashboard-content-grid">
     <section class="panel trend-panel">
@@ -991,7 +1068,7 @@ function renderOverview(): string {
         <div><p class="eyebrow">Live growing conditions</p><h2>Soil moisture</h2><p class="panel-subtitle">${escapeHtml(zone?.name ?? "No selected zone")} · ${escapeHtml(zone?.node.id ?? "No node assigned")}</p></div>
         ${renderRangePicker("Overview chart time range")}
       </div>
-      <div class="chart-summary"><span class="chart-current">${reading ? reading.moisture : "—"}<small>${reading ? "%" : ""}</small></span><span class="chart-change">${icon(recommendation?.action === "irrigate" ? "alerts" : "check")} ${recommendation?.action === "irrigate" ? "Irrigation recommended" : recommendation?.action === "hold" ? "Decision on hold" : "Moisture in range"}</span></div>
+      <div class="chart-summary"><span class="chart-current">${reading?.moisture ?? "—"}<small>${reading?.moisture == null ? "" : "%"}</small></span><span class="chart-change">${icon(recommendation?.action === "irrigate" ? "alerts" : "check")} ${recommendation?.action === "irrigate" ? "Irrigation recommended" : recommendation?.action === "hold" ? "Decision on hold" : "Moisture in range"}</span></div>
       ${renderChart()}
       ${recommendation ? `<div class="recommendation-note"><span class="status status--${recommendation.action === "irrigate" ? "warning" : recommendation.action === "hold" ? "info" : "success"}">${recommendation.action === "irrigate" ? "Water recommended" : recommendation.action === "hold" ? "On hold" : "No watering needed"}</span><p>${escapeHtml(recommendation.reason)}</p><small>Interim model · ${escapeHtml(zone?.crop ?? "")} · ${escapeHtml(zone?.growth_stage ?? "")}</small></div>` : ""}
     </section>
@@ -1024,17 +1101,14 @@ function renderZones(): string {
       <div class="zone-card__top"><span class="zone-symbol">${icon("leaf")}</span><span class="status status--${status.tone}">${escapeHtml(status.label)}</span></div>
       <p class="eyebrow">${escapeHtml(zone.crop)} · ${escapeHtml(zone.growth_stage)} stage</p><h2>${escapeHtml(zone.name)}</h2>
       <div class="zone-card__metrics" aria-label="Latest sensor measurements">
-        <div><span>Soil moisture</span><strong>${reading ? reading.moisture : "—"}<small>${reading ? "%" : ""}</small></strong></div>
-        <div><span>Temperature</span><strong>${reading ? reading.temp.toFixed(1) : "—"}<small>${reading ? "°C" : ""}</small></strong></div>
-        <div><span>Humidity</span><strong>${reading ? reading.humidity : "—"}<small>${reading ? "%" : ""}</small></strong></div>
-        <div><span>Light</span><strong>${reading?.light_lux == null ? "—" : reading.light_lux.toFixed(0)}<small>${reading?.light_lux == null ? "" : " lux"}</small></strong></div>
-        <div><span>PPFD</span><strong>${reading?.light_ppfd == null ? "—" : reading.light_ppfd.toFixed(1)}<small>${reading?.light_ppfd == null ? "" : " µmol/m²/s"}</small></strong></div>
+        <div><span>Soil moisture</span><strong>${reading?.moisture ?? "—"}<small>${reading?.moisture == null ? "" : "%"}</small></strong></div>
+        <div><span>Temperature</span><strong>${reading?.temp == null ? "—" : reading.temp.toFixed(1)}<small>${reading?.temp == null ? "" : "°C"}</small></strong></div>
+        <div><span>Humidity</span><strong>${reading?.humidity ?? "—"}<small>${reading?.humidity == null ? "" : "%"}</small></strong></div>
+        <div><span>Shortwave radiation</span><strong>${reading?.shortwave_radiation_w_m2 == null ? "—" : reading.shortwave_radiation_w_m2.toFixed(1)}<small>${reading?.shortwave_radiation_w_m2 == null ? "" : " W/m²"}</small></strong></div>
         <div><span>Battery</span><strong>${reading?.battery_mv ?? zone.node.battery_mv ?? "—"}<small>${reading ? " mV" : ""}</small></strong></div>
-        <div><span>CO₂</span><strong>${reading?.co2_ppm == null ? "—" : reading.co2_ppm.toFixed(0)}<small>${reading?.co2_ppm == null ? "" : " ppm"}</small></strong></div>
-        <div><span>Soil pH</span><strong>${reading?.soil_ph == null ? "—" : reading.soil_ph.toFixed(2)}<small>${reading?.soil_ph == null ? "" : " pH"}</small></strong></div>
       </div>
       <p class="settings-note">${reading ? `${reading.data_source} reading · ${formatTime(reading.timestamp)}` : "Waiting for sensor measurements"}</p>
-      <div class="moisture-track"><span style="width:${reading ? Math.max(0, Math.min(reading.moisture, 100)) : 0}%"></span></div>
+      <div class="moisture-track"><span style="width:${reading?.moisture == null ? 0 : Math.max(0, Math.min(reading.moisture, 100))}%"></span></div>
       <p class="zone-card__footer">${icon("zones")} Node ${escapeHtml(zone.node.id)} · ${zone.node.online ? `online · ${zone.node.battery_mv} mV` : "offline"} · ${zone.node.last_seen_at ? `last seen ${formatTime(zone.node.last_seen_at)}` : "never reported"}</p>
       <div class="zone-card__valve"><span>Valve <strong>${escapeHtml(zone.valve.state)}</strong> · ${escapeHtml(zone.valve.mode)} mode</span><span class="status status--${zone.valve.mode === "manual" ? "warning" : "info"}">${zone.valve.mode === "manual" ? "Manual override" : "Automatic"}</span></div>
       ${recommendation ? `<p class="zone-reason">${escapeHtml(recommendation.reason)}</p>` : ""}
@@ -1057,10 +1131,7 @@ function renderTrends(): string {
   const moisture = rangeAverages(state.readings, "moisture");
   const temp = rangeAverages(state.readings, "temp");
   const humidity = rangeAverages(state.readings, "humidity");
-  const co2 = rangeAverages(state.readings, "co2_ppm");
-  const ph = rangeAverages(state.readings, "soil_ph");
-  const ppfd = rangeAverages(state.readings, "light_ppfd");
-  const lux = rangeAverages(state.readings, "light_lux");
+  const radiation = rangeAverages(state.readings, "shortwave_radiation_w_m2");
   const battery = rangeAverages(state.readings, "battery_mv");
   const stat = (title: string, key: NumericReadingKey, unit: string, decimals = 1): string => {
     const values = state.readings.flatMap((reading) => {
@@ -1086,15 +1157,12 @@ function renderTrends(): string {
     bubble: true,
   });
   return `<div class="dashboard-heading analytics-heading"><div><p class="eyebrow">Sensor history · ${escapeHtml(state.range)}</p><h1>Growing trends</h1><p class="page-intro">Compare stored soil and climate readings for the selected crop and soil pairing.</p></div><div class="analytics-controls">${renderRangePicker("Trends time range")}${renderZonePicker(zone)}</div></div>
-  <div class="analytics-summary-grid trends-summary-grid">${stat("Soil moisture · mean", "moisture", "%")}${stat("Air temperature · mean", "temp", "°C")}${stat("Relative humidity · mean", "humidity", "% RH")}${stat("CO₂ concentration · mean", "co2_ppm", " ppm", 0)}${stat("Soil pH · mean", "soil_ph", " pH", 2)}${stat("Light intensity · PPFD mean", "light_ppfd", " µmol/m²/s")}${stat("Light intensity · lux mean", "light_lux", " lux", 0)}${stat("Battery voltage · mean", "battery_mv", " mV", 0)}</div>
+  <div class="analytics-summary-grid trends-summary-grid">${stat("Soil moisture · mean", "moisture", "%")}${stat("Air temperature · mean", "temp", "°C")}${stat("Relative humidity · mean", "humidity", "% RH")}${stat("Shortwave radiation · mean", "shortwave_radiation_w_m2", " W/m²")}${stat("Battery voltage · mean", "battery_mv", " mV", 0)}</div>
   <section class="panel trend-panel"><div class="panel__header"><div><p class="eyebrow">Moisture history · ${escapeHtml(state.range)}</p><h2>${escapeHtml(zone?.name ?? "No selected zone")} · Soil moisture</h2><p class="panel-subtitle">Reference-style time-series with target band and exact readings on hover.</p></div></div>${renderChart()}</section>
   <div class="analytics-chart-grid trends-chart-grid">
-    ${renderSeriesPanel("Soil pH", ph, " pH", "warning", { decimals: 2 })}
     ${renderSeriesPanel("Air temperature", temp, "°C", "warning")}
     ${renderSeriesPanel("Relative humidity", humidity, "% RH", "primary")}
-    ${renderSeriesPanel("CO₂ concentration", co2, " ppm", "info", { decimals: 0 })}
-    ${renderSeriesPanel("Light intensity · PPFD", ppfd, " µmol/m²/s", "info")}
-    ${renderSeriesPanel("Light intensity · lux", lux, " lux", "primary", { decimals: 0 })}
+    ${renderSeriesPanel("Shortwave solar radiation", radiation, " W/m²", "primary")}
     ${renderSeriesPanel("Battery voltage", battery, " mV", "warning", { decimals: 0 })}
     ${renderHistogram("Soil moisture", moisture, "%", "primary")}
     ${relationship}
@@ -1281,11 +1349,13 @@ async function refreshWeather(): Promise<void> {
   state.weatherLoading = true;
   state.weatherError = "";
   state.weather = null;
+  state.environmentalStatus = null;
   render();
   try {
     if (!state.weatherLocations.length) state.weatherLocations = await getWeatherLocations();
     const locationId = state.selectedWeatherLocationId || undefined;
-    const weather = await getWeather(locationId);
+    const zoneId = selectedZone()?.id;
+    const weather = await getWeather(locationId, zoneId);
     if (requestId !== state.weatherRequestId) return;
     state.weather = weather;
     state.selectedWeatherLocationId = weather.location.id;
@@ -1293,6 +1363,21 @@ async function refreshWeather(): Promise<void> {
     if (requestId === state.weatherRequestId) state.weatherError = describeError(error);
   } finally {
     if (requestId === state.weatherRequestId) {
+      const zoneId = selectedZone()?.id;
+      if (zoneId) {
+        try {
+          const environmentalStatus = await getEnvironmentalStatus(zoneId);
+          if (requestId !== state.weatherRequestId) return;
+          state.environmentalStatus = environmentalStatus;
+        } catch (error) {
+          if (requestId !== state.weatherRequestId) return;
+          const comparisonError = `Unable to load source comparisons: ${describeError(error)}`;
+          state.weatherError = state.weatherError
+            ? `${state.weatherError} ${comparisonError}`
+            : comparisonError;
+        }
+      }
+      if (requestId !== state.weatherRequestId) return;
       state.weatherLoading = false;
       render();
     }

@@ -1,5 +1,9 @@
 import type {
   Alert,
+  EnvironmentalComparison,
+  EnvironmentalObservation,
+  EnvironmentalParameter,
+  EnvironmentalSource,
   Crop,
   NileGuardRepository,
   Node,
@@ -40,10 +44,10 @@ const initialZones: Zone[] = [
 ];
 
 const startingReadings = [
-  { moisture: 46, temp: 20.5, light_lux: 0, light_ppfd: 0, humidity: 65, co2_ppm: 450, soil_ph: 6.5, battery_mv: 3790 },
-  { moisture: 35, temp: 20.1, light_lux: 0, light_ppfd: 0, humidity: 67, co2_ppm: 450, soil_ph: 6.2, battery_mv: 3790 },
-  { moisture: 43, temp: 18.2, light_lux: 0, light_ppfd: 0, humidity: 65, co2_ppm: 450, soil_ph: 5.8, battery_mv: 3790 },
-  { moisture: 31, temp: 17.8, light_lux: 0, light_ppfd: 0, humidity: 68, co2_ppm: 450, soil_ph: 5.5, battery_mv: 3790 },
+  { moisture: 46, temp: 20.5, shortwave_radiation_w_m2: 0, humidity: 65, battery_mv: 3790 },
+  { moisture: 35, temp: 20.1, shortwave_radiation_w_m2: 0, humidity: 67, battery_mv: 3790 },
+  { moisture: 43, temp: 18.2, shortwave_radiation_w_m2: 0, humidity: 65, battery_mv: 3790 },
+  { moisture: 31, temp: 17.8, shortwave_radiation_w_m2: 0, humidity: 68, battery_mv: 3790 },
 ];
 
 export class MemoryRepository implements NileGuardRepository {
@@ -52,6 +56,9 @@ export class MemoryRepository implements NileGuardRepository {
   private readonly zones = new Map(initialZones.map((zone) => [zone.id, structuredClone(zone)]));
   private readonly nodes = new Map<string, Node>();
   private readonly readings: Reading[] = [];
+  private readonly environmentalObservations: EnvironmentalObservation[] = [];
+  private readonly environmentalComparisons: EnvironmentalComparison[] = [];
+  private nextEnvironmentalId = 1;
   private readonly valves = new Map<string, ValveControl>();
 
   constructor() {
@@ -86,11 +93,8 @@ export class MemoryRepository implements NileGuardRepository {
           zone: zone.id,
           moisture: Math.min(95, Math.max(5, measurement.moisture - 5 + drift)),
           temp: Number((measurement.temp + Math.sin(sample / 4) * 2.1).toFixed(1)),
-          light_lux: Math.max(0, Math.round(20_000 * Math.max(0, Math.sin(((sample % 24 - 6) / 12) * Math.PI)))),
-          light_ppfd: Math.max(0, Math.round(20_000 * Math.max(0, Math.sin(((sample % 24 - 6) / 12) * Math.PI)) / 54)),
+          shortwave_radiation_w_m2: Math.max(0, Math.round(750 * Math.max(0, Math.sin(((sample % 24 - 6) / 12) * Math.PI)))),
           humidity: Math.min(100, Math.max(15, Math.round(measurement.humidity + Math.cos(sample / 5) * 9))),
-          co2_ppm: measurement.co2_ppm,
-          soil_ph: measurement.soil_ph,
           battery_mv: measurement.battery_mv,
           seq: sample + 1,
           gateway_id: "gateway-demo",
@@ -112,6 +116,7 @@ export class MemoryRepository implements NileGuardRepository {
         received_at: new Date(baseTime).toISOString(),
         data_source: "synthetic",
       });
+      this.pushSyntheticObservations(this.readings.at(-1)!);
     });
   }
 
@@ -192,6 +197,12 @@ export class MemoryRepository implements NileGuardRepository {
     for (let index = this.readings.length - 1; index >= 0; index -= 1) {
       if (this.readings[index].zone === id) this.readings.splice(index, 1);
     }
+    for (let index = this.environmentalObservations.length - 1; index >= 0; index -= 1) {
+      if (this.environmentalObservations[index].zoneId === id) this.environmentalObservations.splice(index, 1);
+    }
+    for (let index = this.environmentalComparisons.length - 1; index >= 0; index -= 1) {
+      if (this.environmentalComparisons[index].zoneId === id) this.environmentalComparisons.splice(index, 1);
+    }
     return true;
   }
 
@@ -253,6 +264,49 @@ export class MemoryRepository implements NileGuardRepository {
     }
   }
 
+  recordEnvironmentalObservation(
+    observation: Omit<EnvironmentalObservation, "id">,
+  ): EnvironmentalObservation {
+    const stored = { ...observation, id: String(this.nextEnvironmentalId++) };
+    this.environmentalObservations.push(stored);
+    return { ...stored };
+  }
+
+  getLatestEnvironmentalObservation(
+    zoneId: string,
+    parameter: EnvironmentalParameter,
+    source: EnvironmentalSource,
+  ): EnvironmentalObservation | undefined {
+    return this.environmentalObservations
+      .filter((entry) => entry.zoneId === zoneId && entry.parameter === parameter && entry.source === source)
+      .sort((left, right) => right.measuredAt.localeCompare(left.measuredAt))
+      .map((entry) => ({ ...entry }))[0];
+  }
+
+  listEnvironmentalObservations(zoneId: string, limit = 500): EnvironmentalObservation[] {
+    return this.environmentalObservations
+      .filter((entry) => entry.zoneId === zoneId)
+      .sort((left, right) => right.measuredAt.localeCompare(left.measuredAt) || Number(right.id) - Number(left.id))
+      .slice(0, limit)
+      .map((entry) => ({ ...entry }));
+  }
+
+  recordEnvironmentalComparison(
+    comparison: Omit<EnvironmentalComparison, "id">,
+  ): EnvironmentalComparison {
+    const stored = { ...comparison, id: String(this.nextEnvironmentalId++) };
+    this.environmentalComparisons.push(stored);
+    return { ...stored };
+  }
+
+  listEnvironmentalComparisons(zoneId: string, limit = 500): EnvironmentalComparison[] {
+    return this.environmentalComparisons
+      .filter((entry) => entry.zoneId === zoneId)
+      .sort((left, right) => right.comparedAt.localeCompare(left.comparedAt) || Number(right.id) - Number(left.id))
+      .slice(0, limit)
+      .map((entry) => ({ ...entry }));
+  }
+
   getValve(zoneId: string): ValveControl | undefined {
     const valve = this.valves.get(zoneId);
     return valve && { ...valve };
@@ -263,6 +317,30 @@ export class MemoryRepository implements NileGuardRepository {
     if (!valve) return undefined;
     Object.assign(valve, { state, mode: "manual" as const, updatedAt: new Date().toISOString(), updatedBy: userId });
     return { ...valve };
+  }
+
+  private pushSyntheticObservations(reading: Reading): void {
+    const values: Array<[EnvironmentalParameter, number | null, string]> = [
+      ["soil_moisture", reading.moisture, "%"],
+      ["air_temperature", reading.temp, "°C"],
+      ["relative_humidity", reading.humidity, "%"],
+      ["shortwave_radiation", reading.shortwave_radiation_w_m2, "W/m²"],
+    ];
+    for (const [parameter, value, unit] of values) {
+      this.environmentalObservations.push({
+        id: String(this.nextEnvironmentalId++),
+        zoneId: reading.zone,
+        parameter,
+        value,
+        unit,
+        source: "synthetic",
+        measuredAt: reading.timestamp,
+        receivedAt: reading.received_at,
+        isValid: value !== null && Number.isFinite(value),
+        isStale: false,
+        locationId: null,
+      });
+    }
   }
 
   clearManualValve(zoneId: string): ValveControl | undefined {
@@ -347,11 +425,8 @@ export class MemoryRepository implements NileGuardRepository {
       zone: zoneId,
       moisture: Math.max(5, Math.min(95, (previous?.moisture ?? 40) + moistureStep)),
       temp: Number(Math.max(5, Math.min(45, (previous?.temp ?? 22) + (seq % 2 === 0 ? 0.3 : -0.2))).toFixed(1)),
-      light_lux: 0,
-      light_ppfd: 0,
+      shortwave_radiation_w_m2: 0,
       humidity: Math.max(15, Math.min(100, (previous?.humidity ?? 60) + (seq % 2 === 0 ? -1 : 1))),
-      co2_ppm: previous?.co2_ppm ?? 450,
-      soil_ph: previous?.soil_ph ?? 6,
       battery_mv: snapshot.node.batteryMv,
       seq,
       gateway_id: snapshot.node.gatewayId,
@@ -385,7 +460,7 @@ export async function buildAlerts(repository: NileGuardRepository): Promise<Aler
       });
       continue;
     }
-    if (reading.moisture < snapshot.crop.moistureThresholdPercent) {
+    if (reading.moisture !== null && reading.moisture < snapshot.crop.moistureThresholdPercent) {
       alerts.push({
         id: `low-moisture-${snapshot.zone.id}`,
         type: "low_moisture",

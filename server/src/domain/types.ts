@@ -4,7 +4,48 @@ export type OperatingMode = "automatic" | "manual";
 export type RecommendationAction = "irrigate" | "do_not_irrigate" | "hold";
 export type AlertType = "low_moisture" | "sensor_offline" | "irrigation_manual";
 export type DataSource = "synthetic" | "gateway";
+export type EnvironmentalParameter =
+  | "soil_moisture"
+  | "air_temperature"
+  | "relative_humidity"
+  | "shortwave_radiation";
+export type EnvironmentalSource = "hardware" | "open-meteo" | "synthetic";
+export type ComparisonStatus =
+  | "CONSISTENT"
+  | "CONFLICT"
+  | "HARDWARE_MISSING"
+  | "WEATHER_MISSING"
+  | "STALE_READING"
+  | "INVALID_READING";
 export type Awaitable<T> = T | Promise<T>;
+
+export interface EnvironmentalObservation {
+  id: string;
+  zoneId: string;
+  parameter: EnvironmentalParameter;
+  value: number | null;
+  unit: string;
+  source: EnvironmentalSource;
+  measuredAt: string;
+  receivedAt: string;
+  isValid: boolean;
+  isStale: boolean;
+  locationId: string | null;
+}
+
+export interface EnvironmentalComparison {
+  id: string;
+  zoneId: string;
+  parameter: EnvironmentalParameter;
+  hardwareObservationId: string | null;
+  weatherObservationId: string | null;
+  status: ComparisonStatus;
+  difference: number | null;
+  tolerance: number | null;
+  selectedObservationId: string | null;
+  selectedSource: EnvironmentalSource | null;
+  comparedAt: string;
+}
 
 export interface User {
   id: string;
@@ -50,13 +91,10 @@ export interface Reading {
   id: string;
   node_id: string;
   zone: string;
-  moisture: number;
-  temp: number;
-  light_lux: number | null;
-  light_ppfd: number | null;
-  humidity: number;
-  co2_ppm: number | null;
-  soil_ph: number | null;
+  moisture: number | null;
+  temp: number | null;
+  shortwave_radiation_w_m2: number | null;
+  humidity: number | null;
   battery_mv: number;
   seq: number;
   gateway_id: string;
@@ -83,16 +121,23 @@ export interface ZoneSnapshot {
 export interface Recommendation {
   zoneId: string;
   action: RecommendationAction;
+  status: "READY" | "INSUFFICIENT_DATA" | "SENSOR_ERROR";
   recommendedValveState: ValveState | null;
   effectiveValveState: ValveState;
   mode: OperatingMode;
   reason: string;
   evaluatedAt: string;
-  model: "threshold-v1";
+  model: "soil-moisture-v2";
   inputs: {
     moisturePercent: number | null;
+    moistureSource: EnvironmentalSource | null;
     temperatureCelsius: number | null;
+    temperatureSource: EnvironmentalSource | null;
     humidityPercent: number | null;
+    humiditySource: EnvironmentalSource | null;
+    shortwaveRadiationWm2: number | null;
+    shortwaveRadiationSource: EnvironmentalSource | null;
+    vaporPressureDeficitKpa: number | null;
     moistureThresholdPercent: number;
     growthStage: string;
     soilType: string;
@@ -146,6 +191,15 @@ export interface NileGuardRepository {
   getLatestReading(zoneId: string): Awaitable<Reading | undefined>;
   listReadings(zoneId: string | undefined, since: Date | undefined, limit: number): Awaitable<Reading[]>;
   recordReading(reading: Reading): Awaitable<void>;
+  recordEnvironmentalObservation(observation: Omit<EnvironmentalObservation, "id">): Awaitable<EnvironmentalObservation>;
+  getLatestEnvironmentalObservation(
+    zoneId: string,
+    parameter: EnvironmentalParameter,
+    source: EnvironmentalSource,
+  ): Awaitable<EnvironmentalObservation | undefined>;
+  listEnvironmentalObservations(zoneId: string, limit?: number): Awaitable<EnvironmentalObservation[]>;
+  recordEnvironmentalComparison(comparison: Omit<EnvironmentalComparison, "id">): Awaitable<EnvironmentalComparison>;
+  listEnvironmentalComparisons(zoneId: string, limit?: number): Awaitable<EnvironmentalComparison[]>;
   getValve(zoneId: string): Awaitable<ValveControl | undefined>;
   setManualValve(zoneId: string, state: ValveState, userId: string): Awaitable<ValveControl | undefined>;
   clearManualValve(zoneId: string): Awaitable<ValveControl | undefined>;

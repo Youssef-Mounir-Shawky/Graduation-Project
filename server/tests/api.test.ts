@@ -78,12 +78,12 @@ describe("NileGuard repository-backed API", () => {
     const latestReading = readings.body.data.readings[0];
     assert.ok(Number.isFinite(latestReading.moisture));
     assert.ok(Number.isFinite(latestReading.temp));
-    assert.ok(latestReading.light_lux !== null);
-    assert.ok(latestReading.light_ppfd !== null);
+    assert.ok(latestReading.shortwave_radiation_w_m2 !== null);
+    assert.equal("light_ppfd" in latestReading, false);
     assert.ok(Number.isFinite(latestReading.humidity));
     assert.ok(latestReading.battery_mv > 0);
-    assert.ok(latestReading.co2_ppm !== null);
-    assert.ok(latestReading.soil_ph !== null);
+    assert.equal("co2_ppm" in latestReading, false);
+    assert.equal("soil_ph" in latestReading, false);
 
     const historicalReadings = await request(app)
       .get("/api/readings?zone_id=zone-tomato-loam&hours=4392&limit=10000")
@@ -96,7 +96,8 @@ describe("NileGuard repository-backed API", () => {
       .set("Authorization", `Bearer ${userToken}`);
     assert.equal(recommendation.status, 200);
     assert.equal(recommendation.body.data.action, "do_not_irrigate");
-    assert.match(recommendation.body.data.reason, /35% irrigation threshold/);
+    assert.match(recommendation.body.data.reason, /35% trigger/);
+    assert.equal(recommendation.body.data.status, "READY");
   });
 
   it("keeps manual valve state authoritative through new readings and reevaluation", async () => {
@@ -151,7 +152,7 @@ describe("NileGuard repository-backed API", () => {
     assert.equal(released.body.data.valve_state, "on");
   });
 
-  it("rejects invalid sensor packets and user tokens on gateway ingestion", async () => {
+  it("retains invalid sensor observations for audit and rejects user tokens on gateway ingestion", async () => {
     const noGatewayAuth = await request(app).post("/api/readings").send({
       node_id: "node-tomato-loam", zone: "zone-tomato-loam", moisture: 40, temp: 22,
       humidity: 55, battery_mv: 3900, seq: 26, gateway_id: "gateway-demo",
@@ -196,10 +197,33 @@ describe("NileGuard repository-backed API", () => {
       .set("X-Node-Token", nodeToken)
       .send({
         node_id: "node-tomato-loam", zone: "zone-tomato-loam", moisture: 120, temp: 22,
-        humidity: 55, battery_mv: 3900, seq: 26, gateway_id: "gateway-demo",
+        humidity: 55, battery_mv: 3900, seq: 170, gateway_id: "gateway-demo",
       });
-    assert.equal(invalid.status, 400);
-    assert.equal(invalid.body.error.code, "VALIDATION_ERROR");
+    assert.equal(invalid.status, 201);
+    const environment = await request(app)
+      .get("/api/zones/zone-tomato-loam/environment")
+      .set("Authorization", `Bearer ${userToken}`);
+    assert.ok(environment.body.data.comparisons.every(
+      (comparison: { parameter: string }) => ["air_temperature", "relative_humidity"].includes(comparison.parameter),
+    ));
+    const invalidMoisture = environment.body.data.observations.find(
+      (observation: { parameter: string; source: string; value: number | null }) =>
+        observation.parameter === "soil_moisture" && observation.source === "hardware",
+    );
+    assert.equal(invalidMoisture.value, 120);
+    assert.equal(invalidMoisture.isValid, false);
+    assert.equal(invalid.body.data.recommendation.status, "SENSOR_ERROR");
+
+    const removedParameters = await request(app)
+      .post("/api/readings")
+      .set("Authorization", `Bearer ${gatewayToken}`)
+      .set("X-Node-Token", nodeToken)
+      .send({
+        node_id: "node-tomato-loam", zone: "zone-tomato-loam", moisture: 40, temp: 22,
+        humidity: 55, co2_ppm: 450, soil_ph: 6.5, light_ppfd: 150, battery_mv: 3900, seq: 171, gateway_id: "gateway-demo",
+      });
+    assert.equal(removedParameters.status, 400);
+    assert.equal(removedParameters.body.error.code, "VALIDATION_ERROR");
   });
 
   it("simulates mock sensor readings and rejects unknown zones", async () => {
@@ -253,11 +277,8 @@ describe("NileGuard repository-backed API", () => {
         zone: zoneId,
         moisture: 20,
         temp: 24,
-        light_lux: 1200,
-        light_ppfd: 22.2,
+        shortwave_radiation_w_m2: 420,
         humidity: 70,
-        co2_ppm: 450,
-        soil_ph: 6.2,
         battery_mv: 3900,
         seq: 1,
         gateway_id: "gateway-demo",
@@ -428,7 +449,7 @@ describe("NileGuard repository-backed API", () => {
       .set("Authorization", `Bearer ${staleLogin.body.data.token}`);
     assert.equal(recommendation.status, 200);
     assert.equal(recommendation.body.data.action, "hold");
-    assert.match(recommendation.body.data.reason, /older than five minutes/);
+    assert.match(recommendation.body.data.reason, /stale/i);
     assert.equal(repository.getValve("zone-tomato-loam")?.state, "off");
   });
 });

@@ -30,6 +30,7 @@ Common dashboard routes:
 | `GET /api/users`, `POST /api/users`, `DELETE /api/users/:userId` | Admin | List, create, or delete accounts |
 | `PATCH /api/auth/me` | User | Update only the signed-in user's name, email, phone, and optional password |
 | `GET /api/readings?zone_id=<id>&hours=24&limit=500` | User | Read time-series data |
+| `GET /api/zones/:zoneId/environment` | User | Read retained hardware/weather observations and comparison decisions |
 | `GET /api/recommendations?zone_id=<id>` | User | Evaluate irrigation recommendations |
 | `GET /api/alerts`, `GET /api/irrigation/schedule` | User | Dashboard alerts and schedule |
 | `GET /api/weather/locations` | User | Resolve the configured Cairo-area presets using Open-Meteo Geocoding |
@@ -48,13 +49,17 @@ Sensor features belong to each zone's `sensor_readings` history rather than the 
 | --- | --- |
 | `moisture` | soil moisture, % |
 | `temp` | air temperature, °C |
-| `light_lux`, `light_ppfd` | lux; µmol·m⁻²·s⁻¹ |
+| `shortwave_radiation_w_m2` | W/m² |
 | `humidity` | relative humidity, % |
 | `battery_mv` | battery voltage, mV |
-| `co2_ppm` | carbon dioxide concentration, ppm |
-| `soil_ph` | soil pH |
 
-Water level is intentionally not in the schema/API until the team confirms what is measured and its unit. Reading responses include `timestamp`, `received_at`, `seq`, `gateway_id`, and `data_source` (`synthetic` or `gateway`) so test history is distinguishable from future device data. The seeded history contains about six months of hourly synthetic readings for tomato and potato, each in loam and sandy soil. It is generated test data, not a claim of measured field values. Demo PPFD is estimated from lux and is not calibrated.
+Water level is intentionally not in the schema/API until the team confirms what is measured and its unit. CO₂ concentration and soil pH are no longer part of the schema, API, or dashboard; migration 006 removes those columns without deleting other sensor history. Migration 007 ensures deployed environmental-observation tables include the stale-state flag. Migration 008 removes PPFD telemetry and its historical environmental observations. Reading responses include `timestamp`, `received_at`, `seq`, `gateway_id`, and `data_source` (`synthetic` or `gateway`) so test history is distinguishable from physical devices. Moisture, temperature, humidity, and shortwave radiation may be null when a sensor does not report a value; finite but out-of-range environmental values are retained and marked invalid in environmental observations. Hardware submissions use the field units above.
+
+Environmental records include `parameter`, `value`, `unit`, `source`, `measuredAt`, `receivedAt`, `isValid`, `isStale`, and `locationId`. Sources are `hardware`, `open-meteo`, and `synthetic`. Comparisons are currently recorded for air temperature and relative humidity only; each includes `status`, both observation IDs, absolute difference, configured tolerance, selected observation ID, and selected source. Timestamps are ISO-8601 UTC values. Comparison statuses include `CONSISTENT`, `CONFLICT`, `HARDWARE_MISSING`, `WEATHER_MISSING`, `STALE_READING`, and `INVALID_READING`.
+
+The Weather Forecast view associates the selected Open-Meteo location with the selected zone when it calls `GET /api/weather?location=<preset>&zone_id=<id>`. This enables local comparison records, but a zone-specific geocoordinate has not yet been provisioned; the selected area is currently an explicit proxy for that zone. A weather response saves current temperature, relative humidity, and shortwave radiation only. It never saves soil moisture. Stale cached Open-Meteo observations are marked as stale and are not selected over fresh physical readings.
+
+Recommendation `inputs` returns each environmental value together with its source (`moistureSource`, `temperatureSource`, `humiditySource`, and `shortwaveRadiationSource`). These values explain the current evaluation; no separate recommendation-history table is currently maintained.
 
 ## Gateway and future hardware integration
 
@@ -63,8 +68,8 @@ The API keeps hardware-specific transport out of dashboard routes:
 1. An administrator requests `POST /api/gateways/:gatewayId/token`; the response token authenticates the gateway.
 2. The gateway requests `POST /api/nodes/register` with its gateway bearer token and `{ "zone_id": "..." }`. The response contains a node token. A zone may have only one node.
 3. The gateway submits `POST /api/readings` with both `Authorization: Bearer <gateway-token>` and `X-Node-Token: <node-token>`. The payload includes the node ID, zone ID, gateway ID, monotonically increasing `seq`, and sensor fields.
-4. The API checks both identities, their assignments, the zone, timestamp bounds, and sequence freshness before persisting the reading. A stale or duplicate sequence returns `409 STALE_SEQUENCE`.
-5. On accepted readings, the API evaluates the current decision-engine interface and updates automatic valve state. Manual overrides remain authoritative until cleared.
+4. The API checks both identities, their assignments, the zone, timestamp bounds, and sequence freshness before persisting the reading. It stores environmental observations independently and writes comparison snapshots. A stale or duplicate sequence returns `409 STALE_SEQUENCE`.
+5. On accepted readings, the API evaluates validated soil moisture as the automatic irrigation trigger. Fresh valid physical readings take priority; Open-Meteo may fill temperature, humidity, and radiation only when hardware values are missing, stale, or invalid. Weather cannot supply soil moisture or independently trigger irrigation. Manual overrides remain authoritative until cleared.
 
 `GET /api/dev/gateway-token`, `GET /api/dev/node-token/:nodeId`, and `POST /api/mock/simulate-reading` are development-only simulation helpers; they are not hardware controls and must not be exposed in a deployment. The current valve path updates database state only. A real gateway command/acknowledgement protocol still needs to be agreed and connected before claiming physical irrigation control.
 
@@ -72,7 +77,7 @@ The API keeps hardware-specific transport out of dashboard routes:
 
 The schema relates `users`, `crops`, `soil_types`, `gateways`, `zones`, `nodes`, `sensor_readings`, `valve_controls`, and `irrigation_schedule` using foreign keys, uniqueness constraints, and measurement checks. User emails are unique without case sensitivity; because deletion removes the row, a deleted email can be registered again. Readings have indexes on zone/time, node/time, and receipt time. A partial unique index protects gateway sequence numbers without imposing hardware identity semantics on seeded history.
 
-`PostgresRepository` implements the repository contract used by the routes and decision service. `MemoryRepository` remains available for isolated API tests. The database seed creates exactly these crop/soil combinations: tomato/loam, tomato/sandy, potato/loam, and potato/sandy. Tomato demo settings use a 35% interim trigger, 40–70% moisture target, standard tomato growth stages, and synthetic conditions centered around common tomato pH and temperature ranges; these are examples, not locally validated recommendations.
+`PostgresRepository` implements the repository contract used by the routes and decision service. `MemoryRepository` remains available for isolated API tests. The database seed creates exactly these crop/soil combinations: tomato/loam, tomato/sandy, potato/loam, and potato/sandy. Tomato demo settings use a 35% interim trigger, 40–70% moisture target, standard tomato growth stages, and synthetic temperature conditions; these are examples, not locally validated recommendations.
 
 The current decision engine is intentionally a replaceable interim moisture-threshold implementation. It is not the final crop-, soil-, climate-, or growth-stage-aware algorithm. The API response exposes the recommendation inputs and reason; a future agronomic engine can replace the decision service without changing dashboard request/response routes.
 
