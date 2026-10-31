@@ -12,6 +12,7 @@
     "test": "tsx --test server/tests/*.test.ts",
     "db:setup": "tsx server/src/database/setup.ts",
     "db:rotate-demo-passwords": "tsx server/src/database/rotateDemoPasswords.ts",
+    "deploy:weather-proxy": "wrangler deploy --config cloudflare/wrangler.jsonc",
     "start:api": "node dist-server/src/index.js"
   },
   "dependencies": {
@@ -33,6 +34,7 @@
     "supertest": "^7.1.4",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
-    "vite": "^7.1.12"
+    "vite": "^7.1.12",
+    "wrangler": "^4.156.0"
   }
 }
