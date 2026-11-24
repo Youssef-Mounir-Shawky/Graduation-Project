@@ -29,6 +29,8 @@ const demoZones = [
   { id: "zone-potato-sandy", name: "Potato · Sandy soil", crop: "potato", soil: "sandy", stage: "tuber-initiation", node: "node-potato-sandy", moisture: 32 },
 ] as const;
 
+const hourMs = 60 * 60 * 1000;
+
 const defaultUsers = [
   { id: "user-demo-admin", name: "NileGuard Demo Admin", email: "farmer@nileguard.local", phone: "+1-202-555-0101", role: "admin" },
   { id: "user-demo-operator-1", name: "Amina Hassan", email: "amina.hassan@nileguard.local", phone: "+1-202-555-0102", role: "operator" },
@@ -64,6 +66,16 @@ function mockMeasurement(zone: typeof demoZones[number], timestamp: Date, index:
   };
 }
 
+export function missingHourlyTimestamps(start: Date, end: Date, occupiedHours: ReadonlySet<number>): Date[] {
+  const firstHour = Math.ceil(start.getTime() / hourMs) * hourMs;
+  const lastHour = Math.floor(end.getTime() / hourMs) * hourMs;
+  const missing: Date[] = [];
+  for (let time = firstHour; time <= lastHour; time += hourMs) {
+    if (!occupiedHours.has(time)) missing.push(new Date(time));
+  }
+  return missing;
+}
+
 async function seedUsers(client: PoolClient): Promise<string[]> {
   const issuedCredentials: string[] = [];
   for (const user of defaultUsers) {
@@ -88,7 +100,6 @@ async function seedSyntheticHistory(client: PoolClient): Promise<void> {
   const now = new Date();
   const start = new Date(now);
   start.setUTCMonth(start.getUTCMonth() - 6);
-  const hourMs = 60 * 60 * 1000;
   const historyCount = Math.floor((now.getTime() - start.getTime()) / hourMs) + 1;
   const chunkSize = 500;
 
@@ -123,21 +134,21 @@ async function seedSyntheticHistory(client: PoolClient): Promise<void> {
     ) {
       extendsExistingHistory = true;
       const currentHour = Math.floor(now.getTime() / hourMs) * hourMs;
-      const firstHour = currentHour - 23 * hourMs;
+      const firstHour = Math.ceil(start.getTime() / hourMs) * hourMs;
       const occupiedHours = await client.query<{ hour: Date }>(
         `SELECT date_trunc('hour', measured_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS hour
          FROM nileguard.sensor_readings
          WHERE zone_id = $1
            AND measured_at >= $2
+           AND measured_at < $3
          GROUP BY 1`,
-        [zone.id, new Date(firstHour)],
+        [zone.id, new Date(firstHour), new Date(currentHour + hourMs)],
       );
       const occupied = new Set(occupiedHours.rows.map(({ hour }) => hour.getTime()));
-      for (let time = firstHour; time <= currentHour; time += hourMs) {
-        if (!occupied.has(time)) timestamps.push(new Date(time));
-      }
+      timestamps = missingHourlyTimestamps(new Date(firstHour), new Date(currentHour), occupied);
       if (!status.latest_reading || status.latest_reading.getTime() < now.getTime() - 5 * 60_000) {
-        timestamps.push(now);
+        if (timestamps.at(-1)?.getTime() === currentHour) timestamps[timestamps.length - 1] = now;
+        else timestamps.push(now);
       }
     } else {
       continue;
@@ -269,7 +280,7 @@ export async function seedDatabase(database: Pool): Promise<void> {
     } else {
       console.log("Default demo users already exist; passwords were not changed.");
     }
-    console.log("Seeded the four crop/soil combinations with hourly samples from the previous six months; existing synthetic histories are preserved.");
+    console.log("Seeded the four crop/soil combinations with six months of hourly samples; existing readings are preserved and missing synthetic hours are backfilled.");
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

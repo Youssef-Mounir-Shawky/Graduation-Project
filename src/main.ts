@@ -299,6 +299,24 @@ function formatRangePoint(timestamp: string): string {
     : formatDate(timestamp);
 }
 
+function positionOnTimeAxis(timestamp: string, start: number, end: number, left: number, right: number): number {
+  const duration = end - start;
+  return left + (duration > 0 ? (Date.parse(timestamp) - start) / duration : 0) * (right - left);
+}
+
+function renderTimeAxisLabels(start: number, end: number, left: number, right: number, y: number): string {
+  if (end <= start) {
+    const label = escapeHtml(formatRangePoint(new Date(start).toISOString()));
+    return `<text class="analytics-axis-label" x="${(left + right) / 2}" y="${y}" text-anchor="middle">${label}</text>`;
+  }
+  return [0, 0.5, 1].map((fraction, index) => {
+    const timestamp = new Date(start + (end - start) * fraction).toISOString();
+    const x = left + fraction * (right - left);
+    const anchor = index === 0 ? "start" : index === 2 ? "end" : "middle";
+    return `<text class="analytics-axis-label" x="${x}" y="${y}" text-anchor="${anchor}">${escapeHtml(formatRangePoint(timestamp))}</text>`;
+  }).join("");
+}
+
 function rangeAverages(readings: ApiReading[], field: NumericReadingKey): DailyPoint[] {
   const aggregates = new Map<string, { timestamp: string; total: number; count: number }>();
   for (const reading of readings) {
@@ -312,7 +330,8 @@ function rangeAverages(readings: ApiReading[], field: NumericReadingKey): DailyP
     aggregate.count += 1;
     aggregates.set(bucket, aggregate);
   }
-  return Array.from(aggregates.values(), ({ timestamp, total, count }) => ({ timestamp, value: total / count }));
+  return Array.from(aggregates.values(), ({ timestamp, total, count }) => ({ timestamp, value: total / count }))
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
 }
 
 function renderRangePicker(label: string): string {
@@ -387,9 +406,11 @@ function renderSeriesPanel(
   const minimum = options.domain?.[0] ?? rawMin - padding;
   const maximum = options.domain?.[1] ?? rawMax + padding;
   const sample = sampleEvenly(points, 72);
+  const start = Date.parse(points[0].timestamp);
+  const end = Date.parse(points.at(-1)?.timestamp ?? points[0].timestamp);
   const positionY = (value: number) => bottom - ((value - minimum) / (maximum - minimum)) * (bottom - top);
-  const coords = sample.map((point, index) => ({
-    x: left + (index / Math.max(sample.length - 1, 1)) * (right - left),
+  const coords = sample.map((point) => ({
+    x: positionOnTimeAxis(point.timestamp, start, end, left, right),
     y: positionY(point.value),
     point,
   }));
@@ -415,8 +436,7 @@ function renderSeriesPanel(
       <path class="analytics-line analytics-line--${color}" d="${linePath}"/>
       <circle class="analytics-point analytics-point--${color}" cx="${coords.at(-1)?.x ?? left}" cy="${coords.at(-1)?.y ?? bottom}" r="4"/>
       ${marks}
-      <text class="analytics-axis-label" x="${left}" y="230">${escapeHtml(formatRangePoint(points[0].timestamp))}</text>
-      <text class="analytics-axis-label" x="${right}" y="230" text-anchor="end">${escapeHtml(formatRangePoint(points.at(-1)?.timestamp ?? points[0].timestamp))}</text>
+      ${renderTimeAxisLabels(start, end, left, right, 230)}
     </svg>
     <div class="chart-tooltip" aria-hidden="true"></div>
     <div class="analytics-chart-footer"><span>${points.length} ${state.range === "24 hours" ? "hours" : "days"} with readings</span><span>Mean ${escapeHtml(meanText)}</span>${options.target ? `<span>Configured target ${options.target[0]}–${options.target[1]}${escapeHtml(unit)}</span>` : ""}</div>
@@ -984,18 +1004,18 @@ function renderChart(): string {
   const right = width - 18;
   const top = 18;
   const bottom = 204;
-  const sample = sampleEvenly(moistureReadings.map((reading, index) => ({ reading, index })), 180);
-  const coords = sample.map(({ reading, index }) => ({
+  const start = Date.parse(moistureReadings[0].timestamp);
+  const end = Date.parse(moistureReadings.at(-1)?.timestamp ?? moistureReadings[0].timestamp);
+  const sample = sampleEvenly(moistureReadings, 180);
+  const coords = sample.map((reading) => ({
     reading,
-    x: left + (index / Math.max(moistureReadings.length - 1, 1)) * (right - left),
+    x: positionOnTimeAxis(reading.timestamp, start, end, left, right),
     y: bottom - ((reading.moisture ?? 0) / 100) * (bottom - top),
   }));
   const linePath = coords.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
   const areaPath = `${linePath} L ${right},${bottom} L ${left},${bottom} Z`;
   const targetTop = bottom - (zone.moisture_target_max_percent / 100) * (bottom - top);
   const targetBottom = bottom - (zone.moisture_target_min_percent / 100) * (bottom - top);
-  const startLabel = moistureReadings[0].timestamp;
-  const endLabel = moistureReadings[moistureReadings.length - 1].timestamp;
   const markers = coords.map(({ reading, x, y }) => {
     return `<circle class="analytics-hit-point analytics-hit-point--primary" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="8" ${chartTip(`${formatRangePoint(reading.timestamp)} · ${state.range === "24 hours" ? formatTime(reading.timestamp) : ""}`, [`X · Time: ${formatDate(reading.timestamp)} ${formatTime(reading.timestamp)}`, `Y · Soil moisture: ${reading.moisture?.toFixed(1) ?? "—"}%`])}/>`;
   }).join("");
@@ -1012,8 +1032,7 @@ function renderChart(): string {
       <path d="${linePath}" class="chart-line"/>
       <circle cx="${coords.at(-1)?.x ?? left}" cy="${coords.at(-1)?.y ?? bottom}" r="5" class="chart-dot"/>
       ${markers}
-      <text class="analytics-axis-label" x="${left}" y="232">${escapeHtml(formatRangePoint(startLabel))}</text>
-      <text class="analytics-axis-label" x="${right}" y="232" text-anchor="end">${escapeHtml(formatRangePoint(endLabel))}</text>
+      ${renderTimeAxisLabels(start, end, left, right, 232)}
     </svg>
     <div class="chart-tooltip" aria-hidden="true"></div>
   </div>
@@ -1059,7 +1078,8 @@ function renderOverview(): string {
   <section class="metric-grid" aria-label="Greenhouse summary">
     ${renderMetric("Connected nodes", `${activeNodes}/${state.zones.length}`, "", activeNodes === state.zones.length ? "All reporting within 5 minutes" : "One or more nodes need checking", "zones")}
     ${renderMetric("Soil moisture", reading?.moisture == null ? "—" : String(reading.moisture), reading?.moisture == null ? "" : "%", zone ? `${zone.name} · ${zone.valve.mode} mode` : "No zones configured", "irrigation")}
-    ${renderMetric("Temperature · humidity", reading?.temp == null ? "—" : `${reading.temp.toFixed(1)}°`, reading?.temp == null ? "" : `C · ${reading.humidity == null ? "—" : `${reading.humidity}% RH`}`, reading ? `Battery ${zone?.node.battery_mv ?? "—"} mV` : "Waiting for sensor readings", "thermometer")}
+    ${renderMetric("Temperature", reading?.temp == null ? "—" : reading.temp.toFixed(1), reading?.temp == null ? "" : "°C", reading ? `Battery ${zone?.node.battery_mv ?? "—"} mV` : "Waiting for sensor readings", "thermometer")}
+    ${renderMetric("Humidity", reading?.humidity == null ? "—" : String(reading.humidity), reading?.humidity == null ? "" : "% RH", reading ? zone?.name ?? "Latest sensor reading" : "Waiting for sensor readings", "humidity")}
     ${renderMetric("Shortwave radiation", reading?.shortwave_radiation_w_m2 == null ? "—" : reading.shortwave_radiation_w_m2.toFixed(1), reading?.shortwave_radiation_w_m2 == null ? "" : "W/m²", "Primary weather and sensor light input", "trends")}
   </section>
   <div class="dashboard-content-grid">
